@@ -18,4 +18,4 @@ dev_dependencies:
 script_runner:
   scripts:
     - analyze: dart analyze
-    - format: dart format --line-length 100 --fix lib
+    - format: dart format --line-length 100 --fix lib && dart format --line-length 100 --fix test
