@@ -16,6 +16,6 @@ final class ExponentialBackoffRetryConfig extends RetryConfig {
 
   @override
   Duration durationForRetry(int retryCount) {
-    return initialDelay * pow(multiplier, retryCount);
+    return initialDelay * (retryCount == 0 ? 0 : pow(multiplier, retryCount));
   }
 }
