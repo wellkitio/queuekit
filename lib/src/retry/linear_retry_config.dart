@@ -3,15 +3,15 @@ import 'package:queuekit/src/retry/retry_config.dart';
 final class LinearRetryConfig extends RetryConfig {
   LinearRetryConfig({
     required this.maxRetries,
-    required this.initialDelay,
+    required this.delay,
   });
 
   @override
   final int maxRetries;
-  final Duration initialDelay;
+  final Duration delay;
 
   @override
-  Duration durationForRetry(int retryCount) {
-    return initialDelay * retryCount;
+  Duration minimumDurationForRetry(int retryCount) {
+    return delay * retryCount;
   }
 }

@@ -125,7 +125,7 @@ base class Queue extends Stream<QueueListenerResult> {
       final retryConfig = event.retryConfig;
       if (retryConfig == null || retryConfig.maxRetries == retryConfig.retryCount) continue;
       retryConfig.retry();
-      final nextExecutionTime = DateTime.now().toUtc().add(retryConfig.durationForCurrentRetry());
+      final nextExecutionTime = DateTime.now().toUtc().add(retryConfig.minimumDurationForCurrentRetry());
       final id = uuid.v4();
       retryQueue.addAll({
         id: (
@@ -134,7 +134,7 @@ base class Queue extends Stream<QueueListenerResult> {
         ),
       });
       _timers.addAll({
-        id: Timer(retryConfig.durationForCurrentRetry(), () {
+        id: Timer(retryConfig.minimumDurationForCurrentRetry(), () {
           currentQueue.add(event);
           retryQueue.remove(id);
           _timers.remove(id);

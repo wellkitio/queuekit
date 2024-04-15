@@ -3,7 +3,7 @@ import 'package:test/test.dart';
 
 final class TestRetryConfig extends RetryConfig {
   @override
-  Duration durationForRetry(int retryCount) {
+  Duration minimumDurationForRetry(int retryCount) {
     throw UnimplementedError();
   }
 

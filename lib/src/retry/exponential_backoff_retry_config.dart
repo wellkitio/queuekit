@@ -5,17 +5,17 @@ import 'package:queuekit/src/retry/retry_config.dart';
 final class ExponentialBackoffRetryConfig extends RetryConfig {
   ExponentialBackoffRetryConfig({
     required this.maxRetries,
-    required this.initialDelay,
+    required this.delay,
     required this.multiplier,
   });
 
   @override
   final int maxRetries;
-  final Duration initialDelay;
+  final Duration delay;
   final double multiplier;
 
   @override
-  Duration durationForRetry(int retryCount) {
-    return initialDelay * (retryCount == 0 ? 0 : pow(multiplier, retryCount));
+  Duration minimumDurationForRetry(int retryCount) {
+    return delay * (retryCount == 0 ? 0 : pow(multiplier, retryCount));
   }
 }
