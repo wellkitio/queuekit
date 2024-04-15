@@ -1,8 +1,6 @@
 import 'dart:async';
 
 import 'package:queuekit/queuekit.dart';
-import 'package:queuekit/src/exceptions.dart';
-import 'package:queuekit/src/queue_start_listenable.dart';
 import 'package:uuid/uuid.dart';
 
 typedef QueueListenerResult<T> = ({Event<T> event, T result});
