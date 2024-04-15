@@ -136,6 +136,7 @@ base class Queue extends Stream<QueueListenerResult> {
       _timers.addAll({
         id: Timer(retryConfig.durationForCurrentRetry(), () {
           currentQueue.add(event);
+          retryQueue.remove(id);
           _timers.remove(id);
         }),
       });
