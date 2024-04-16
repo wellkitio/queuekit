@@ -110,7 +110,7 @@ void main() {
       final eventB = EventB();
 
       int count = 0;
-      queue.listenWhere<EventA>((params) {
+      queue.listenWhere<EventA, LinearRetryConfig>((params) {
         if (count == 0) {
           expect(params.event, isA<EventA>());
           count++;

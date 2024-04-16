@@ -9,6 +9,16 @@ final class TestRetryConfig extends RetryConfig {
 
   @override
   int get maxRetries => 1;
+
+  @override
+  JsonSerializer<TestRetryConfig> serializer = JsonSerializer(
+    fromJson: (json) {
+      throw UnimplementedError();
+    },
+    toJson: (config) {
+      throw UnimplementedError();
+    }
+  );
 }
 
 void main() {

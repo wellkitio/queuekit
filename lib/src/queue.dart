@@ -1,11 +1,15 @@
 import 'dart:async';
 
+import 'package:meta/meta.dart';
 import 'package:queuekit/queuekit.dart';
 import 'package:uuid/uuid.dart';
 
-typedef QueueListenerResult<T> = ({Event<T> event, T result});
-typedef OnError<T> = FutureOr<void> Function(
-    Event<T> event, EventFailedException error, StackTrace stackTrace);
+typedef QueueListenerResult<T, U extends RetryConfig> = ({Event<T, U> event, T result});
+typedef OnError<T, U extends RetryConfig> = FutureOr<void> Function(
+  Event<T, U> event,
+  EventFailedException error,
+  StackTrace stackTrace,
+);
 
 base class Queue extends Stream<QueueListenerResult> {
   Queue(this.startListenable) {
@@ -20,7 +24,8 @@ base class Queue extends Stream<QueueListenerResult> {
   late bool running = startListenable.isStarted;
 
   final _controller = StreamController<QueueListenerResult>.broadcast();
-  final _timers = <String, Timer>{};
+  @protected
+  final timers = <String, Timer>{};
 
   void add(Event event) {
     currentQueue.add(event);
@@ -29,13 +34,8 @@ base class Queue extends Stream<QueueListenerResult> {
     }
   }
 
-  void _filterOnError<T>(
-    Object originalError,
-    StackTrace originalStackTrace,
-    OnError<T> onError,
-  ) {
-    if (originalError is! EventFailedException) return;
-    onError(originalError.event as Event<T>, originalError, originalStackTrace);
+  void removeIndexFromCurrentQueue(int index) {
+    currentQueue.removeAt(index);
   }
 
   @override
@@ -53,20 +53,20 @@ base class Queue extends Stream<QueueListenerResult> {
     );
   }
 
-  StreamSubscription<QueueListenerResult<T>> listenWhere<T>(
-    void Function(QueueListenerResult<T> params)? onData, {
-    OnError<T>? onError,
+  StreamSubscription<QueueListenerResult<T, U>> listenWhere<T, U extends RetryConfig>(
+    void Function(QueueListenerResult<T, U> params)? onData, {
+    OnError<T, U>? onError,
     void Function()? onDone,
     bool? cancelOnError,
   }) {
     return _controller.stream
         .where((event) => event.result is T)
-        .cast<QueueListenerResult<T>>()
+        .cast<QueueListenerResult<T, U>>()
         .listen(
       onData,
       onError: (Object e, StackTrace s) {
         if (onError == null) return;
-        _filterOnError<T>(e, s, onError);
+        _filterOnError<T, U>(e, s, onError);
       },
       onDone: onDone,
       cancelOnError: cancelOnError,
@@ -93,38 +93,24 @@ base class Queue extends Stream<QueueListenerResult> {
   void dispose() {
     startListenable.dispose();
     _controller.close();
-    for (final MapEntry(value: timer) in _timers.entries) {
+    for (final MapEntry(value: timer) in timers.entries) {
       timer.cancel();
     }
+  }
+
+  void _filterOnError<T, U extends RetryConfig>(
+    Object originalError,
+    StackTrace originalStackTrace,
+    OnError<T, U> onError,
+  ) {
+    if (originalError is! EventFailedException) return;
+    onError(originalError.event as Event<T, U>, originalError, originalStackTrace);
   }
 
   void _updateRunning(bool shouldStartRunning) {
     running = shouldStartRunning;
     if (!running) return;
     _start();
-  }
-
-  void _addRetry(Event event, Object e, StackTrace s) {
-    _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
-    final retryConfig = event.retryConfig;
-    if (retryConfig == null || retryConfig.maxRetries == retryConfig.retryCount) return;
-    retryConfig.retry();
-    final duration = retryConfig.minimumDurationForCurrentRetry();
-    final nextExecutionTime = DateTime.now().toUtc().add(duration);
-    final id = uuid.v4();
-    retryQueue.addAll({
-      id: (
-        event: event,
-        nextExecutionTime: nextExecutionTime,
-      ),
-    });
-    _timers.addAll({
-      id: Timer(duration, () {
-        retryQueue.remove(id);
-        _timers.remove(id);
-        add(event);
-      }),
-    });
   }
 
   Future<void> _start() async {
@@ -140,9 +126,41 @@ base class Queue extends Stream<QueueListenerResult> {
           _addRetry(event, e, s);
         }
       }
-
-      currentQueue.removeRange(i, i + 1);
+      removeIndexFromCurrentQueue(i);
       i--;
     }
+  }
+
+  @protected
+  void addToRetryQueue(String id, Event event, Duration duration) {
+    final nextExecutionTime = DateTime.now().toUtc().add(duration);
+    retryQueue.addAll({
+      id: (
+        event: event,
+        nextExecutionTime: nextExecutionTime,
+      ),
+    });
+  }
+
+  @protected
+  void addTimerForRetry(String id, Event event, Duration duration) {
+    timers.addAll({
+      id: Timer(duration, () {
+        retryQueue.remove(id);
+        timers.remove(id);
+        add(event);
+      }),
+    });
+  }
+
+  void _addRetry(Event event, Object e, StackTrace s) {
+    _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
+    final retryConfig = event.retryConfig;
+    if (retryConfig == null || retryConfig.maxRetries == retryConfig.retryCount) return;
+    retryConfig.retry();
+    final duration = event.retryConfig!.minimumDurationForCurrentRetry();
+    final id = uuid.v4();
+    addToRetryQueue(id, event, duration);
+    addTimerForRetry(id, event, duration);
   }
 }

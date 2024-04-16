@@ -1,3 +1,4 @@
+import 'package:queuekit/queuekit.dart';
 import 'package:queuekit/src/exceptions.dart';
 
 /// [RetryConfig] is an abstract class that provides the configuration for retrying a task.
@@ -30,4 +31,6 @@ abstract base class RetryConfig {
     }
     retryCount++;
   }
+
+  JsonSerializer<RetryConfig> get serializer;
 }

@@ -12,14 +12,14 @@ final class RetryExceededException implements Exception {
   }
 }
 
-final class EventFailedException<T> implements Exception {
+final class EventFailedException<T, U extends RetryConfig> implements Exception {
   EventFailedException({
     required this.event,
     required this.error,
     required this.stackTrace,
   }) : super();
 
-  final Event<T> event;
+  final Event<T, U> event;
   final Object error;
   final StackTrace stackTrace;
 
