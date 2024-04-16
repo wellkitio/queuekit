@@ -1,3 +1,4 @@
+import 'package:queuekit/queuekit.dart';
 import 'package:queuekit/src/exceptions.dart';
 
 /// [RetryConfig] is an abstract class that provides the configuration for retrying a task.
@@ -11,11 +12,15 @@ abstract base class RetryConfig {
   /// [retryCount] is the number of retries that have been attempted. It starts at 0.
   int retryCount = 0;
 
-  /// [durationForRetry] is the duration to wait before the next retry.
-  Duration durationForRetry(int retryCount);
+  /// [minimumDurationForRetry] is the duration to wait before the next retry.
+  /// Since the event will be added to the back of the queue, it's not guaranteed that
+  /// the event will be executed immediately after the duration has passed.
+  Duration minimumDurationForRetry(int retryCount);
 
-  /// [durationForCurrentRetry] is the duration to wait before the next retry based on the current [retryCount].
-  Duration durationForCurrentRetry() => durationForRetry(retryCount);
+  /// [minimumDurationForCurrentRetry] is the duration to wait before the next retry based on the current [retryCount].
+  /// Since the event will be added to the back of the queue, it's not guaranteed that
+  /// the event will be executed immediately after the duration has passed.
+  Duration minimumDurationForCurrentRetry() => minimumDurationForRetry(retryCount);
 
   /// [retry]  will increment [retryCount] if [maxRetries] is greater than 0 and it's not exceeded.
   /// If [maxRetries] is exceeded, it will throw a [RetryExceededException].
@@ -26,4 +31,6 @@ abstract base class RetryConfig {
     }
     retryCount++;
   }
+
+  JsonSerializer<RetryConfig> get serializer;
 }
