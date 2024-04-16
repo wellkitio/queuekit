@@ -4,7 +4,8 @@ import 'package:queuekit/queuekit.dart';
 import 'package:uuid/uuid.dart';
 
 typedef QueueListenerResult<T> = ({Event<T> event, T result});
-typedef OnError<T> = FutureOr<void> Function(Event<T> event, Object error, StackTrace stackTrace);
+typedef OnError<T> = FutureOr<void> Function(
+    Event<T> event, EventFailedException error, StackTrace stackTrace);
 
 base class Queue extends Stream<QueueListenerResult> {
   Queue(this.startListenable) {
@@ -103,6 +104,29 @@ base class Queue extends Stream<QueueListenerResult> {
     _start();
   }
 
+  void _addRetry(Event event, Object e, StackTrace s) {
+    _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
+    final retryConfig = event.retryConfig;
+    if (retryConfig == null || retryConfig.maxRetries == retryConfig.retryCount) return;
+    retryConfig.retry();
+    final duration = retryConfig.minimumDurationForCurrentRetry();
+    final nextExecutionTime = DateTime.now().toUtc().add(duration);
+    final id = uuid.v4();
+    retryQueue.addAll({
+      id: (
+        event: event,
+        nextExecutionTime: nextExecutionTime,
+      ),
+    });
+    _timers.addAll({
+      id: Timer(duration, () {
+        retryQueue.remove(id);
+        _timers.remove(id);
+        add(event);
+      }),
+    });
+  }
+
   Future<void> _start() async {
     for (int i = 0; i < currentQueue.length; i++) {
       if (!running) return;
@@ -112,32 +136,13 @@ base class Queue extends Stream<QueueListenerResult> {
         _controller.add((event: event, result: result));
       } catch (e, s) {
         final retryConfig = event.retryConfig;
-        if (retryConfig == null) {
-          _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
-          retryQueue.addAll({});
+        if (retryConfig != null) {
+          _addRetry(event, e, s);
         }
       }
 
       currentQueue.removeRange(i, i + 1);
       i--;
-      final retryConfig = event.retryConfig;
-      if (retryConfig == null || retryConfig.maxRetries == retryConfig.retryCount) continue;
-      retryConfig.retry();
-      final nextExecutionTime = DateTime.now().toUtc().add(retryConfig.minimumDurationForCurrentRetry());
-      final id = uuid.v4();
-      retryQueue.addAll({
-        id: (
-          event: event,
-          nextExecutionTime: nextExecutionTime,
-        ),
-      });
-      _timers.addAll({
-        id: Timer(retryConfig.minimumDurationForCurrentRetry(), () {
-          currentQueue.add(event);
-          retryQueue.remove(id);
-          _timers.remove(id);
-        }),
-      });
     }
   }
 }
