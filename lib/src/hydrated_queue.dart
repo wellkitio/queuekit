@@ -8,17 +8,18 @@ typedef SaveRetryFunction = FutureOr<void> Function(
   List<
           ({
             String id,
-            Map<String, dynamic> json,
+            Map<String, dynamic> event,
             DateTime nextExecutionTime,
           })>
       data,
 );
-typedef HydrateRetryFunction = FutureOr<Map<
-        String,
-        ({
-          HydratedEvent event,
-          DateTime nextExecutionTime,
-        })>>
+typedef HydrateRetryFunction = FutureOr<
+        Map<
+            String,
+            ({
+              HydratedEvent event,
+              DateTime nextExecutionTime,
+            })>>
     Function();
 
 base class HydratedQueue extends Queue {
@@ -77,7 +78,7 @@ base class HydratedQueue extends Queue {
       retryQueue.entries.map((e) {
         return (
           id: e.key,
-          json: e.value.event.toJson(),
+          event: e.value.event.toJson(),
           nextExecutionTime: e.value.nextExecutionTime,
         );
       }).toList(),

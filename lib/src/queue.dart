@@ -4,9 +4,13 @@ import 'package:meta/meta.dart';
 import 'package:queuekit/queuekit.dart';
 import 'package:uuid/uuid.dart';
 
-typedef QueueListenerResult<T, U extends RetryConfig> = ({Event<T, U> event, T result});
-typedef OnError<T, U extends RetryConfig> = FutureOr<void> Function(
-  Event<T, U> event,
+typedef QueueListenerResult<T extends Event<U, V>, U extends Object?, V extends RetryConfig> = ({
+  T event,
+  U result,
+});
+typedef OnError<T extends Event<U, V>, U extends Object?, V extends RetryConfig> = FutureOr<void>
+    Function(
+  T event,
   EventFailedException error,
   StackTrace stackTrace,
 );
@@ -53,29 +57,30 @@ base class Queue extends Stream<QueueListenerResult> {
     );
   }
 
-  StreamSubscription<QueueListenerResult<T, U>> listenWhere<T, U extends RetryConfig>(
-    void Function(QueueListenerResult<T, U> params)? onData, {
-    OnError<T, U>? onError,
+  StreamSubscription<QueueListenerResult<T, U, V>>
+      listenWhere<T extends Event<U, V>, U extends Object?, V extends RetryConfig>(
+    void Function(QueueListenerResult<T, U, V> params)? onData, {
+    OnError<T, U, V>? onError,
     void Function()? onDone,
     bool? cancelOnError,
   }) {
     return _controller.stream
-        .where((event) => event.result is T)
-        .cast<QueueListenerResult<T, U>>()
+        .where((result) => result.event is T)
+        .cast<QueueListenerResult<T, U, V>>()
         .listen(
       onData,
       onError: (Object e, StackTrace s) {
         if (onError == null) return;
-        _filterOnError<T, U>(e, s, onError);
+        _filterOnError<T, U, V>(e, s, onError);
       },
       onDone: onDone,
       cancelOnError: cancelOnError,
     );
   }
 
-  StreamSubscription<QueueListenerResult> listenAll(
+  StreamSubscription<QueueListenerResult<Event<Object?, RetryConfig>, Object?, RetryConfig>> listenAll(
     void Function(QueueListenerResult params)? onData, {
-    OnError? onError,
+    OnError<Event<Object?, RetryConfig>, Object?, RetryConfig>? onError,
     void Function()? onDone,
     bool? cancelOnError,
   }) {
@@ -83,7 +88,7 @@ base class Queue extends Stream<QueueListenerResult> {
       onData,
       onError: (Object e, StackTrace s) {
         if (onError == null) return;
-        _filterOnError(e, s, onError);
+        _filterOnError<Event<Object?, RetryConfig>, Object?, RetryConfig>(e, s, onError);
       },
       onDone: onDone,
       cancelOnError: cancelOnError,
@@ -98,13 +103,13 @@ base class Queue extends Stream<QueueListenerResult> {
     }
   }
 
-  void _filterOnError<T, U extends RetryConfig>(
+  void _filterOnError<T extends Event<U, V>, U extends Object?, V extends RetryConfig>(
     Object originalError,
     StackTrace originalStackTrace,
-    OnError<T, U> onError,
+    OnError<T, U, V> onError,
   ) {
     if (originalError is! EventFailedException) return;
-    onError(originalError.event as Event<T, U>, originalError, originalStackTrace);
+    onError(originalError.event as T, originalError, originalStackTrace);
   }
 
   void _updateRunning(bool shouldStartRunning) {

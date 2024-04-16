@@ -1,0 +1,20 @@
+name: queuekit_example
+description: "Example application to demonstrate QueueKit"
+publish_to: 'none'
+version: 0.1.0
+
+environment:
+  sdk: '>=3.3.3 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  queuekit:
+    path: ..
+  shared_preferences: ^2.2.3
+
+dev_dependencies:
+  lint: ^2.3.0
+
+flutter:
+  uses-material-design: true
