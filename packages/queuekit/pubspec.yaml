@@ -1,0 +1,22 @@
+name: queuekit
+description: A starting point for Dart libraries or applications.
+version: 0.0.1
+repository: https://github.com/wellkitio/queuekit
+
+environment:
+  sdk: ^3.3.3
+
+dependencies:
+  meta: ^1.0.0
+  state_notifier: ^1.0.0
+  uuid: ^4.4.0
+
+dev_dependencies:
+  lint: ^2.3.0
+  script_runner: ^0.7.3
+  test: ^1.24.0
+
+script_runner:
+  scripts:
+    - analyze: dart analyze
+    - format: dart format --line-length 100 --fix lib && dart format --line-length 100 --fix test
