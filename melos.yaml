@@ -1,0 +1,6 @@
+name: queuekit
+sdkPath: .fvm/flutter_sdk
+
+packages:
+  - packages/*
+  - packages/*/example
