@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "43997251074",
+    "project_id": "queuekit-example-app",
+    "storage_bucket": "queuekit-example-app.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:43997251074:android:0e56399a713df73f6b891b",
+        "android_client_info": {
+          "package_name": "com.example.queuekit_example_app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDYXU_lSindcMhE-w3Z7rkaO5zZRS9U3Sw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

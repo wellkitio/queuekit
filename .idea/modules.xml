@@ -4,6 +4,7 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/packages/queuekit/melos_queuekit.iml" filepath="$PROJECT_DIR$/packages/queuekit/melos_queuekit.iml" />
       <module fileurl="file://$PROJECT_DIR$/packages/queuekit/example/melos_queuekit_example.iml" filepath="$PROJECT_DIR$/packages/queuekit/example/melos_queuekit_example.iml" />
+      <module fileurl="file://$PROJECT_DIR$/packages/queuekit_example_app/melos_queuekit_example_app.iml" filepath="$PROJECT_DIR$/packages/queuekit_example_app/melos_queuekit_example_app.iml" />
       <module fileurl="file://$PROJECT_DIR$/melos_queuekit.iml" filepath="$PROJECT_DIR$/melos_queuekit.iml" />
     </modules>
   </component>
