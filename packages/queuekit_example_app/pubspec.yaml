@@ -12,6 +12,10 @@ dependencies:
   firebase_core: ^2.30.0
   flutter:
     sdk: flutter
+  go_router: ^13.2.4
+  queuekit:
+    path: ../queuekit
+  shared_preferences: ^2.2.3
 
 dev_dependencies:
   flutter_test:

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:queuekit/queuekit.dart';
@@ -33,6 +34,10 @@ class ExampleEvent extends HydratedEvent<String, LinearRetryConfig> {
 
   @override
   Future<String> run() {
+    final r = Random();
+    if (r.nextBool()) {
+      throw Exception('Random error');
+    }
     return Future.delayed(const Duration(seconds: 1), () => 'Hello World!');
   }
 
@@ -66,14 +71,27 @@ Future<void> main() async {
       ];
     },
     saveRetryQueue: (data) async {
-      await prefs.setString('retryQueue', jsonEncode(data));
+      await prefs.setString(
+        'retryQueue',
+        jsonEncode(
+          data
+              .map(
+                (e) => {
+                  'event': e.event,
+                  'nextExecutionTime': e.nextExecutionTime.toIso8601String(),
+                },
+              )
+              .toList(),
+        ),
+      );
     },
     hydrateRetryQueue: () {
       final json = prefs.getString('retryQueue');
       if (json == null) {
         return {};
       }
-      final data = (jsonDecode(json) as List).cast<Map<String, dynamic>>();;
+      final data = (jsonDecode(json) as List).cast<Map<String, dynamic>>();
+      ;
       return {
         for (final value in data)
           if (value['event']['type'] == 'ExampleEvent')
@@ -106,12 +124,16 @@ class _MainAppState extends State<MainApp> {
   @override
   void initState() {
     super.initState();
-    subscription =
-        queue.listenWhere<ExampleEvent, String, LinearRetryConfig>((params) {
-      setState(() {
-        data.add(params.result);
-      });
-    });
+    subscription = queue.listenWhere<ExampleEvent, String, LinearRetryConfig>(
+      (params) {
+        setState(() {
+          data.add(params.result);
+        });
+      },
+      onError: (event, error, stackTrace) {
+        print('An error');
+      },
+    );
   }
 
   @override
