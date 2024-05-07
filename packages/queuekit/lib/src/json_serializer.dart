@@ -9,4 +9,3 @@ class JsonSerializer<T> {
   final FromJson<T> fromJson;
   final Map<String, dynamic> Function(T data) toJson;
 }
-

@@ -23,13 +23,15 @@ final exampleEventSerializer = JsonSerializer(
   },
 );
 
-class ExampleEvent extends HydratedEvent<String, LinearRetryConfig> {
+class ExampleEvent extends HydratedEvent<String> {
+  @override
+  String get id => 'id';
+
   @override
   String get type => 'ExampleEvent';
 
   @override
-  LinearRetryConfig? retryConfig =
-      LinearRetryConfig(maxRetries: 10, delay: const Duration(seconds: 1));
+  LinearRetryConfig? retryConfig = LinearRetryConfig(maxRetries: 10, delay: const Duration(seconds: 1));
 
   @override
   Future<String> run() {
@@ -37,8 +39,7 @@ class ExampleEvent extends HydratedEvent<String, LinearRetryConfig> {
   }
 
   @override
-  JsonSerializer<HydratedEvent<String, LinearRetryConfig>> serializer =
-      exampleEventSerializer;
+  JsonSerializer<HydratedEvent<String>> serializer = exampleEventSerializer;
 }
 
 Future<void> main() async {
@@ -60,9 +61,7 @@ Future<void> main() async {
       return [
         for (final e in data)
           if (e['type'] == 'ExampleEvent')
-            ExampleEvent()
-              ..retryConfig =
-                  linearRetryConfigSerializer.fromJson(e['retryConfig']),
+            ExampleEvent()..retryConfig = linearRetryConfigSerializer.fromJson(e['retryConfig']),
       ];
     },
     saveRetryQueue: (data) async {
@@ -73,14 +72,14 @@ Future<void> main() async {
       if (json == null) {
         return {};
       }
-      final data = (jsonDecode(json) as List).cast<Map<String, dynamic>>();;
+      final data = (jsonDecode(json) as List).cast<Map<String, dynamic>>();
+      ;
       return {
         for (final value in data)
           if (value['event']['type'] == 'ExampleEvent')
             value['id']: (
               event: exampleEventSerializer.fromJson(value['event']),
-              nextExecutionTime:
-                  DateTime.parse(value['nextExecutionTime'] as String),
+              nextExecutionTime: DateTime.parse(value['nextExecutionTime'] as String),
             ),
       };
     },
@@ -106,8 +105,7 @@ class _MainAppState extends State<MainApp> {
   @override
   void initState() {
     super.initState();
-    subscription =
-        queue.listenWhere<ExampleEvent, String, LinearRetryConfig>((params) {
+    subscription = queue.listenWhere<ExampleEvent, String>((params) {
       setState(() {
         data.add(params.result);
       });
@@ -128,8 +126,7 @@ class _MainAppState extends State<MainApp> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                if (data.isEmpty)
-                  const Text('Press the button to add an event'),
+                if (data.isEmpty) const Text('Press the button to add an event'),
                 for (final item in data) Text(item),
               ],
             ),

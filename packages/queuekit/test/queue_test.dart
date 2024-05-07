@@ -1,7 +1,7 @@
 import 'package:queuekit/queuekit.dart';
 import 'package:test/test.dart';
 
-class EventA extends Event<Object?, LinearRetryConfig> {
+class EventA extends Event<Object?> {
   @override
   LinearRetryConfig? retryConfig = LinearRetryConfig(
     maxRetries: 10,
@@ -15,6 +15,9 @@ class EventA extends Event<Object?, LinearRetryConfig> {
 
   @override
   String get type => 'EventA';
+
+  @override
+  String get id => 'id';
 }
 
 class EventB extends Event {
@@ -32,9 +35,12 @@ class EventB extends Event {
 
   @override
   String get type => 'EventB';
+
+  @override
+  String get id => 'id';
 }
 
-class FailingEventOnFirstTry extends Event<Object?, LinearRetryConfig> {
+class FailingEventOnFirstTry extends Event<Object?> {
   @override
   LinearRetryConfig? retryConfig = LinearRetryConfig(
     maxRetries: 10,
@@ -55,6 +61,9 @@ class FailingEventOnFirstTry extends Event<Object?, LinearRetryConfig> {
 
   @override
   String get type => 'FailingEventOnFirstTry';
+
+  @override
+  String get id => 'id';
 }
 
 void main() {
@@ -110,7 +119,7 @@ void main() {
       final eventB = EventB();
 
       int count = 0;
-      queue.listenWhere<EventA, Object?, LinearRetryConfig>((params) {
+      queue.listenWhere<EventA, Object?>((params) {
         if (count == 0) {
           expect(params.event, isA<EventA>());
           count++;

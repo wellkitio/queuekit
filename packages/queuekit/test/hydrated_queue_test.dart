@@ -1,7 +1,9 @@
+import 'dart:convert';
+
 import 'package:queuekit/queuekit.dart';
 import 'package:test/test.dart';
 
-class EventA extends HydratedEvent<Object?, LinearRetryConfig> {
+class EventA extends HydratedEvent<Object?> {
   @override
   LinearRetryConfig? retryConfig = LinearRetryConfig(
     maxRetries: 10,
@@ -14,23 +16,13 @@ class EventA extends HydratedEvent<Object?, LinearRetryConfig> {
   }
 
   @override
-  String get type => 'EventA';
+  String get id => 'id';
 
   @override
-  late JsonSerializer<HydratedEvent<Object?, LinearRetryConfig>> serializer = JsonSerializer(
-    fromJson: (json) {
-      return EventA()
-        ..retryConfig = linearRetryConfigSerializer.fromJson(json['retry'] as Map<String, dynamic>);
-    },
-    toJson: (config) {
-      return {
-        'retry': retryConfig?.serializer.toJson(retryConfig!),
-      };
-    },
-  );
+  String get type => 'EventA';
 }
 
-class EventB extends HydratedEvent<Object?, ExponentialBackoffRetryConfig> {
+class EventB extends HydratedEvent<Object?> {
   @override
   ExponentialBackoffRetryConfig? retryConfig = ExponentialBackoffRetryConfig(
     maxRetries: 10,
@@ -44,25 +36,13 @@ class EventB extends HydratedEvent<Object?, ExponentialBackoffRetryConfig> {
   }
 
   @override
-  String get type => 'EventB';
+  String get id => 'id';
 
   @override
-  late JsonSerializer<HydratedEvent<Object?, ExponentialBackoffRetryConfig>> serializer =
-      JsonSerializer(
-    fromJson: (json) {
-      return EventB()
-        ..retryConfig =
-            exponentialBackoffRetryConfigSerializer.fromJson(json['retry'] as Map<String, dynamic>);
-    },
-    toJson: (config) {
-      return {
-        'retry': retryConfig?.serializer.toJson(retryConfig!),
-      };
-    },
-  );
+  String get type => 'EventB';
 }
 
-class FailingEventOnFirstTry extends HydratedEvent<Object?, LinearRetryConfig> {
+class FailingEventOnFirstTry extends HydratedEvent<String?> {
   @override
   LinearRetryConfig? retryConfig = LinearRetryConfig(
     maxRetries: 10,
@@ -70,7 +50,7 @@ class FailingEventOnFirstTry extends HydratedEvent<Object?, LinearRetryConfig> {
   );
 
   @override
-  Future<Object?> run() async {
+  Future<String?> run() async {
     if (retryConfig!.retryCount == 0) {
       throw Exception('Failed on first try');
     } else {
@@ -79,20 +59,10 @@ class FailingEventOnFirstTry extends HydratedEvent<Object?, LinearRetryConfig> {
   }
 
   @override
-  String get type => 'FailingEventOnFirstTry';
+  String get id => 'id';
 
   @override
-  late JsonSerializer<HydratedEvent<Object?, LinearRetryConfig>> serializer = JsonSerializer(
-    fromJson: (json) {
-      return FailingEventOnFirstTry()
-        ..retryConfig = linearRetryConfigSerializer.fromJson(json['retry'] as Map<String, dynamic>);
-    },
-    toJson: (config) {
-      return {
-        'retry': retryConfig?.serializer.toJson(retryConfig!),
-      };
-    },
-  );
+  String get type => 'FailingEventOnFirstTry';
 }
 
 void main() {
@@ -101,20 +71,35 @@ void main() {
       final qsl = QueueStartListenable();
       final queue = HydratedQueue(
         qsl,
+        eventSerializers: {
+          'EventA': (
+            fromJson: (json) => EventA(),
+            toJson: (event) => {},
+          ),
+          'EventB': (
+            fromJson: (json) => EventB(),
+            toJson: (event) => {},
+          ),
+          'FailingEventOnFirstTry': (
+            fromJson: (json) => FailingEventOnFirstTry(),
+            toJson: (event) => {},
+          ),
+        },
         hydrateCurrentQueue: () {
-          return [
-            EventA(),
-            EventB(),
-            FailingEventOnFirstTry(),
-          ];
+          return jsonEncode([
+            {'type': 'EventA'},
+            {'type': 'EventB'},
+            {'type': 'FailingEventOnFirstTry'},
+          ]);
         },
         hydrateRetryQueue: () {
-          return {
-            'id': (
-              event: EventA(),
-              nextExecutionTime: DateTime.now().add(const Duration(seconds: 1)),
-            ),
-          };
+          return jsonEncode({
+            'id': {
+              'type': 'EventA',
+              'event': {},
+              'nextExecutionTime': DateTime.now().add(const Duration(seconds: 1)).toIso8601String(),
+            },
+          });
         },
         saveCurrentQueue: (json) async {},
         saveRetryQueue: (data) async {},
@@ -133,22 +118,40 @@ void main() {
       int saveRetryQueueCount = 0;
       final queue = HydratedQueue(
         qsl,
+        eventSerializers: {
+          'EventA': (
+            fromJson: (json) => EventA(),
+            toJson: (event) => {},
+          ),
+          'EventB': (
+            fromJson: (json) => EventB(),
+            toJson: (event) => {},
+          ),
+          'FailingEventOnFirstTry': (
+            fromJson: (json) => FailingEventOnFirstTry(),
+            toJson: (event) => {},
+          ),
+        },
         hydrateCurrentQueue: () {
-          return [];
+          return '[]';
         },
         hydrateRetryQueue: () {
-          return {};
+          return '{}';
         },
-        saveCurrentQueue: (json) async {
+        saveCurrentQueue: (jsonString) async {
+          final json = jsonDecode(jsonString) as List;
           switch (saveCurrentQueueCount) {
             case 0:
               expect(json.length, equals(1));
+              // ignore: avoid_dynamic_calls
               expect(json.first['type'], equals('EventA'));
             case 1:
               expect(json.length, equals(2));
+              // ignore: avoid_dynamic_calls
               expect(json[1]['type'], equals('EventB'));
             case 2:
               expect(json.length, equals(3));
+              // ignore: avoid_dynamic_calls
               expect(json[2]['type'], equals('FailingEventOnFirstTry'));
             case 3:
               expect(json.length, equals(2));
@@ -159,7 +162,8 @@ void main() {
           }
           saveCurrentQueueCount++;
         },
-        saveRetryQueue: (data) async {
+        saveRetryQueue: (dataString) async {
+          final data = jsonDecode(dataString) as Map;
           if (saveRetryQueueCount case 5 || 6) {
             expect(data.length, equals(1));
           } else {

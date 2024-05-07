@@ -4,12 +4,11 @@ import 'package:meta/meta.dart';
 import 'package:queuekit/queuekit.dart';
 import 'package:uuid/uuid.dart';
 
-typedef QueueListenerResult<T extends Event<U, V>, U extends Object?, V extends RetryConfig> = ({
+typedef QueueListenerResult<T extends Event<U>, U extends Object?> = ({
   T event,
   U result,
 });
-typedef OnError<T extends Event<U, V>, U extends Object?, V extends RetryConfig> = FutureOr<void>
-    Function(
+typedef OnError<T extends Event<U>, U extends Object?> = FutureOr<void> Function(
   T event,
   EventFailedException error,
   StackTrace stackTrace,
@@ -57,30 +56,26 @@ base class Queue extends Stream<QueueListenerResult> {
     );
   }
 
-  StreamSubscription<QueueListenerResult<T, U, V>>
-      listenWhere<T extends Event<U, V>, U extends Object?, V extends RetryConfig>(
-    void Function(QueueListenerResult<T, U, V> params)? onData, {
-    OnError<T, U, V>? onError,
+  StreamSubscription<QueueListenerResult<T, U>> listenWhere<T extends Event<U>, U extends Object?>(
+    void Function(QueueListenerResult<T, U> params)? onData, {
+    OnError<T, U>? onError,
     void Function()? onDone,
     bool? cancelOnError,
   }) {
-    return _controller.stream
-        .where((result) => result.event is T)
-        .cast<QueueListenerResult<T, U, V>>()
-        .listen(
+    return _controller.stream.where((result) => result.event is T).cast<QueueListenerResult<T, U>>().listen(
       onData,
       onError: (Object e, StackTrace s) {
         if (onError == null) return;
-        _filterOnError<T, U, V>(e, s, onError);
+        _filterOnError<T, U>(e, s, onError);
       },
       onDone: onDone,
       cancelOnError: cancelOnError,
     );
   }
 
-  StreamSubscription<QueueListenerResult<Event<Object?, RetryConfig>, Object?, RetryConfig>> listenAll(
+  StreamSubscription<QueueListenerResult<Event<Object?>, Object?>> listenAll(
     void Function(QueueListenerResult params)? onData, {
-    OnError<Event<Object?, RetryConfig>, Object?, RetryConfig>? onError,
+    OnError<Event<Object?>, Object?>? onError,
     void Function()? onDone,
     bool? cancelOnError,
   }) {
@@ -88,7 +83,7 @@ base class Queue extends Stream<QueueListenerResult> {
       onData,
       onError: (Object e, StackTrace s) {
         if (onError == null) return;
-        _filterOnError<Event<Object?, RetryConfig>, Object?, RetryConfig>(e, s, onError);
+        _filterOnError<Event<Object?>, Object?>(e, s, onError);
       },
       onDone: onDone,
       cancelOnError: cancelOnError,
@@ -103,10 +98,10 @@ base class Queue extends Stream<QueueListenerResult> {
     }
   }
 
-  void _filterOnError<T extends Event<U, V>, U extends Object?, V extends RetryConfig>(
+  void _filterOnError<T extends Event<U>, U extends Object?>(
     Object originalError,
     StackTrace originalStackTrace,
-    OnError<T, U, V> onError,
+    OnError<T, U> onError,
   ) {
     if (originalError is! EventFailedException) return;
     onError(originalError.event as T, originalError, originalStackTrace);
@@ -161,11 +156,12 @@ base class Queue extends Stream<QueueListenerResult> {
   void _addRetry(Event event, Object e, StackTrace s) {
     _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
     final retryConfig = event.retryConfig;
-    if (retryConfig == null || retryConfig.maxRetries == retryConfig.retryCount) return;
+    if (retryConfig == null || retryConfig.maxRetries == retryConfig.retryCount) {
+      return;
+    }
     retryConfig.retry();
     final duration = event.retryConfig!.minimumDurationForCurrentRetry();
-    final id = uuid.v4();
-    addToRetryQueue(id, event, duration);
-    addTimerForRetry(id, event, duration);
+    addToRetryQueue(event.id, event, duration);
+    addTimerForRetry(event.id, event, duration);
   }
 }
