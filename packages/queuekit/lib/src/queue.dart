@@ -90,6 +90,24 @@ base class Queue extends Stream<QueueListenerResult> {
     );
   }
 
+  Future<U> waitFor<T extends Event<U>, U extends Object?>(T event) async {
+    final completer = Completer<U>();
+    late StreamSubscription<QueueListenerResult<T, U>> subscription;
+    subscription = listenWhere<T, U>(
+      (result) {
+        if (event.id != result.event.id) return;
+        subscription.cancel();
+        completer.complete(result.result);
+      },
+      onError: (event_, error, stackTrace) {
+        if (event_.id != event.id) return;
+        subscription.cancel();
+        completer.completeError(error, stackTrace);
+      },
+    );
+    return completer.future;
+  }
+
   void dispose() {
     startListenable.dispose();
     _controller.close();

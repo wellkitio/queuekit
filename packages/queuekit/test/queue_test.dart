@@ -10,14 +10,14 @@ class EventA extends Event<Object?> {
 
   @override
   Future<Object?> run() async {
-    return null;
+    return "EventA";
   }
 
   @override
   String get type => 'EventA';
 
   @override
-  String get id => 'id';
+  String get id => 'eventAid';
 }
 
 class EventB extends Event {
@@ -37,7 +37,7 @@ class EventB extends Event {
   String get type => 'EventB';
 
   @override
-  String get id => 'id';
+  String get id => 'eventBid';
 }
 
 class FailingEventOnFirstTry extends Event<Object?> {
@@ -174,6 +174,21 @@ void main() {
       expect(event.retryConfig?.retryCount, equals(1));
       expect(queue.currentQueue.length, equals(0));
       expect(queue.retryQueue.length, equals(0));
+    });
+
+    test('waitFor', () async {
+      final qsl = QueueStartListenable();
+      qsl.start();
+      final queue = Queue(qsl);
+      final eventA = EventA();
+      final eventB = EventB();
+
+      queue.add(eventA);
+      queue.add(eventB);
+
+      final result = await queue.waitFor<EventA, Object?>(eventA);
+
+      expect(result, equals('EventA'));
     });
   });
 }
