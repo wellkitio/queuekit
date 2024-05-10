@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:queuekit/queuekit.dart';
@@ -37,9 +36,6 @@ class ExampleEvent extends HydratedEvent<String> {
   Future<String> run() {
     return Future.delayed(const Duration(seconds: 1), () => 'Hello World!');
   }
-
-  @override
-  JsonSerializer<HydratedEvent<String>> serializer = exampleEventSerializer;
 }
 
 Future<void> main() async {
@@ -48,40 +44,23 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   queue = HydratedQueue(
     startListenable,
-    saveCurrentQueue: (json) async {
-      await prefs.setString('currentQueue', jsonEncode(json));
+    eventSerializers: {
+      'ExampleEvent': (
+        fromJson: exampleEventSerializer.fromJson,
+        toJson: (event) => exampleEventSerializer.toJson(event as ExampleEvent),
+      ),
+    },
+    saveCurrentQueue: (data) async {
+      await prefs.setString('currentQueue', data);
     },
     hydrateCurrentQueue: () {
-      final json = prefs.getString('currentQueue');
-      if (json == null) {
-        return [];
-      }
-
-      final data = (jsonDecode(json) as List).cast<Map<String, dynamic>>();
-      return [
-        for (final e in data)
-          if (e['type'] == 'ExampleEvent')
-            ExampleEvent()..retryConfig = linearRetryConfigSerializer.fromJson(e['retryConfig']),
-      ];
+      return prefs.getString('currentQueue');
     },
     saveRetryQueue: (data) async {
-      await prefs.setString('retryQueue', jsonEncode(data));
+      await prefs.setString('retryQueue', data);
     },
     hydrateRetryQueue: () {
-      final json = prefs.getString('retryQueue');
-      if (json == null) {
-        return {};
-      }
-      final data = (jsonDecode(json) as List).cast<Map<String, dynamic>>();
-      ;
-      return {
-        for (final value in data)
-          if (value['event']['type'] == 'ExampleEvent')
-            value['id']: (
-              event: exampleEventSerializer.fromJson(value['event']),
-              nextExecutionTime: DateTime.parse(value['nextExecutionTime'] as String),
-            ),
-      };
+      return prefs.getString('retryQueue');
     },
   );
 
