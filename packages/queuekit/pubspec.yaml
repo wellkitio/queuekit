@@ -1,5 +1,5 @@
 name: queuekit
-description: A starting point for Dart libraries or applications.
+description: Queuekit is a task queuing library that supports hydration of tasks
 version: 0.0.1
 repository: https://github.com/wellkitio/queuekit
 
