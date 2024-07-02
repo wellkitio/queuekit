@@ -27,17 +27,21 @@ base class Queue extends Stream<QueueListenerResult> {
   late bool running = startListenable.isStarted;
 
   final _controller = StreamController<QueueListenerResult>.broadcast();
+  bool _disposed = false;
   @protected
   final timers = <String, Timer>{};
 
   void add(Event event) {
+    _checkDisposed();
     currentQueue.add(event);
     if (running && currentQueue.length == 1) {
       _start();
     }
   }
 
+  @protected
   void removeIndexFromCurrentQueue(int index) {
+    _checkDisposed();
     currentQueue.removeAt(index);
   }
 
@@ -48,6 +52,7 @@ base class Queue extends Stream<QueueListenerResult> {
     void Function()? onDone,
     bool? cancelOnError,
   }) {
+    _checkDisposed();
     return _controller.stream.listen(
       onData,
       onError: onError,
@@ -62,6 +67,7 @@ base class Queue extends Stream<QueueListenerResult> {
     void Function()? onDone,
     bool? cancelOnError,
   }) {
+    _checkDisposed();
     return _controller.stream.where((result) => result.event is T).cast<QueueListenerResult<T, U>>().listen(
       onData,
       onError: (Object e, StackTrace s) {
@@ -79,6 +85,7 @@ base class Queue extends Stream<QueueListenerResult> {
     void Function()? onDone,
     bool? cancelOnError,
   }) {
+    _checkDisposed();
     return _controller.stream.listen(
       onData,
       onError: (Object e, StackTrace s) {
@@ -91,6 +98,7 @@ base class Queue extends Stream<QueueListenerResult> {
   }
 
   Future<U> waitFor<T extends Event<U>, U extends Object?>(T event) async {
+    _checkDisposed();
     final completer = Completer<U>();
     late StreamSubscription<QueueListenerResult<T, U>> subscription;
     subscription = listenWhere<T, U>(
@@ -109,11 +117,21 @@ base class Queue extends Stream<QueueListenerResult> {
   }
 
   void dispose() {
+    _checkDisposed();
     startListenable.dispose();
     _controller.close();
     for (final MapEntry(value: timer) in timers.entries) {
       timer.cancel();
     }
+    currentQueue.clear();
+    retryQueue.clear();
+    timers.clear();
+    running = false;
+    _disposed = true;
+  }
+
+  void _checkDisposed() {
+    if (_disposed) throw StateError('Queue is already disposed');
   }
 
   void _filterOnError<T extends Event<U>, U extends Object?>(
@@ -126,12 +144,14 @@ base class Queue extends Stream<QueueListenerResult> {
   }
 
   void _updateRunning(bool shouldStartRunning) {
+    _checkDisposed();
     running = shouldStartRunning;
     if (!running) return;
     _start();
   }
 
   Future<void> _start() async {
+    _checkDisposed();
     for (int i = 0; i < currentQueue.length; i++) {
       if (!running) return;
       final event = currentQueue[i];
@@ -139,11 +159,10 @@ base class Queue extends Stream<QueueListenerResult> {
         final result = await event.run();
         _controller.add((event: event, result: result));
       } catch (e, s) {
+        _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
         final retryConfig = event.retryConfig;
         if (retryConfig != null) {
           _addRetry(event, e, s);
-        } else {
-          _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
         }
       }
       removeIndexFromCurrentQueue(i);
@@ -153,6 +172,7 @@ base class Queue extends Stream<QueueListenerResult> {
 
   @protected
   void addToRetryQueue(String id, Event event, Duration duration) {
+    _checkDisposed();
     final nextExecutionTime = DateTime.now().toUtc().add(duration);
     retryQueue.addAll({
       id: (
@@ -164,11 +184,13 @@ base class Queue extends Stream<QueueListenerResult> {
 
   @protected
   void removeFromRetryQueue(String id) {
+    _checkDisposed();
     retryQueue.remove(id);
   }
 
   @protected
   void addTimerForRetry(String id, Event event, Duration duration) {
+    _checkDisposed();
     timers.addAll({
       id: Timer(duration, () {
         removeFromRetryQueue(id);
@@ -179,7 +201,7 @@ base class Queue extends Stream<QueueListenerResult> {
   }
 
   void _addRetry(Event event, Object e, StackTrace s) {
-    _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
+    _checkDisposed();
     final retryConfig = event.retryConfig;
     if (retryConfig == null || retryConfig.maxRetries == retryConfig.retryCount) {
       return;
