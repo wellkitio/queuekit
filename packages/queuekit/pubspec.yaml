@@ -1,6 +1,6 @@
 name: queuekit
 description: Queuekit is a task queuing library that supports hydration of tasks
-version: 0.0.1
+version: 0.1.0
 repository: https://github.com/wellkitio/queuekit
 
 environment:
