@@ -9,7 +9,3 @@ abstract class Event<T extends Object?> {
 
   Future<T> run();
 }
-
-abstract class HydratedEvent<T extends Object?> extends Event<T> {
-  HydratedEvent();
-}

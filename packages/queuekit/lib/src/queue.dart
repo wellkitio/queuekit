@@ -142,6 +142,8 @@ base class Queue extends Stream<QueueListenerResult> {
         final retryConfig = event.retryConfig;
         if (retryConfig != null) {
           _addRetry(event, e, s);
+        } else {
+          _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
         }
       }
       removeIndexFromCurrentQueue(i);
@@ -161,10 +163,15 @@ base class Queue extends Stream<QueueListenerResult> {
   }
 
   @protected
+  void removeFromRetryQueue(String id) {
+    retryQueue.remove(id);
+  }
+
+  @protected
   void addTimerForRetry(String id, Event event, Duration duration) {
     timers.addAll({
       id: Timer(duration, () {
-        retryQueue.remove(id);
+        removeFromRetryQueue(id);
         timers.remove(id);
         add(event);
       }),
@@ -178,7 +185,7 @@ base class Queue extends Stream<QueueListenerResult> {
       return;
     }
     retryConfig.retry();
-    final duration = event.retryConfig!.minimumDurationForCurrentRetry();
+    final duration = retryConfig.minimumDurationForCurrentRetry();
     addToRetryQueue(event.id, event, duration);
     addTimerForRetry(event.id, event, duration);
   }

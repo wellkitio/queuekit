@@ -2,13 +2,12 @@ import 'package:queuekit/queuekit.dart';
 import 'package:test/test.dart';
 
 final class TestRetryConfig extends RetryConfig {
+  TestRetryConfig() : super(maxRetries: 1);
+
   @override
   Duration minimumDurationForRetry(int retryCount) {
     throw UnimplementedError();
   }
-
-  @override
-  int get maxRetries => 1;
 
   @override
   JsonSerializer<TestRetryConfig> serializer = JsonSerializer(
@@ -17,7 +16,7 @@ final class TestRetryConfig extends RetryConfig {
     },
     toJson: (config) {
       throw UnimplementedError();
-    }
+    },
   );
 }
 

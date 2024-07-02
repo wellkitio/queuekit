@@ -5,11 +5,7 @@ class QueueStartListenable extends StateNotifier<bool> {
 
   bool get isStarted => state;
 
-  void start() {
-    state = true;
-  }
+  void start() => state = true;
 
-  void pause() {
-    state = false;
-  }
+  void pause() => state = false;
 }

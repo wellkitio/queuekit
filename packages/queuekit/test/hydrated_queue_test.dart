@@ -3,7 +3,7 @@ import 'dart:convert';
 import 'package:queuekit/queuekit.dart';
 import 'package:test/test.dart';
 
-class EventA extends HydratedEvent<Object?> {
+class EventA extends Event<Object?> {
   @override
   LinearRetryConfig? retryConfig = LinearRetryConfig(
     maxRetries: 10,
@@ -22,7 +22,7 @@ class EventA extends HydratedEvent<Object?> {
   String get type => 'EventA';
 }
 
-class EventB extends HydratedEvent<Object?> {
+class EventB extends Event<Object?> {
   @override
   ExponentialBackoffRetryConfig? retryConfig = ExponentialBackoffRetryConfig(
     maxRetries: 10,
@@ -42,7 +42,7 @@ class EventB extends HydratedEvent<Object?> {
   String get type => 'EventB';
 }
 
-class FailingEventOnFirstTry extends HydratedEvent<String?> {
+class FailingEventOnFirstTry extends Event<String?> {
   @override
   LinearRetryConfig? retryConfig = LinearRetryConfig(
     maxRetries: 10,

@@ -1,7 +1,6 @@
 import 'dart:math';
 
 import 'package:queuekit/queuekit.dart';
-import 'package:queuekit/src/retry/retry_config.dart';
 
 final exponentialBackoffRetryConfigSerializer = JsonSerializer(
   fromJson: (json) {
@@ -22,22 +21,20 @@ final exponentialBackoffRetryConfigSerializer = JsonSerializer(
 
 final class ExponentialBackoffRetryConfig extends RetryConfig {
   ExponentialBackoffRetryConfig({
-    required this.maxRetries,
+    required super.maxRetries,
     required this.delay,
     required this.multiplier,
   });
 
-  @override
-  final int maxRetries;
   final Duration delay;
   final double multiplier;
 
   @override
   Duration minimumDurationForRetry(int retryCount) {
-    return delay * (retryCount == 0 ? 0 : pow(multiplier, retryCount));
+    if (retryCount == 0) return Duration.zero;
+    return delay * pow(multiplier, retryCount);
   }
 
   @override
-  JsonSerializer<RetryConfig> serializer =
-      exponentialBackoffRetryConfigSerializer;
+  JsonSerializer<ExponentialBackoffRetryConfig> serializer = exponentialBackoffRetryConfigSerializer;
 }

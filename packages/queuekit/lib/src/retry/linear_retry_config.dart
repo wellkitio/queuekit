@@ -17,12 +17,10 @@ final linearRetryConfigSerializer = JsonSerializer(
 
 final class LinearRetryConfig extends RetryConfig {
   LinearRetryConfig({
-    required this.maxRetries,
+    required super.maxRetries,
     required this.delay,
   });
 
-  @override
-  final int maxRetries;
   final Duration delay;
 
   @override
@@ -31,5 +29,5 @@ final class LinearRetryConfig extends RetryConfig {
   }
 
   @override
-  JsonSerializer<RetryConfig> serializer = linearRetryConfigSerializer;
+  JsonSerializer<LinearRetryConfig> serializer = linearRetryConfigSerializer;
 }

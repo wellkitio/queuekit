@@ -41,5 +41,20 @@ void main() {
       c.retry();
       expect(c.minimumDurationForCurrentRetry(), equals(const Duration(seconds: 8)));
     });
+
+    test('serializer should be able to serialize and deserialize', () {
+      final c = ExponentialBackoffRetryConfig(
+        multiplier: 2,
+        delay: const Duration(seconds: 1),
+        maxRetries: 10,
+      );
+
+      final json = c.serializer.toJson(c);
+      final c2 = c.serializer.fromJson(json);
+
+      expect(c2.delay, equals(const Duration(seconds: 1)));
+      expect(c2.multiplier, equals(2));
+      expect(c2.maxRetries, equals(10));
+    });
   });
 }

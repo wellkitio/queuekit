@@ -1,4 +1,5 @@
 typedef FromJson<T> = T Function(Map<String, dynamic> json);
+typedef ToJson<T> = Map<String, dynamic> Function(T data);
 
 class JsonSerializer<T> {
   JsonSerializer({
@@ -7,5 +8,5 @@ class JsonSerializer<T> {
   });
 
   final FromJson<T> fromJson;
-  final Map<String, dynamic> Function(T data) toJson;
+  final ToJson<T> toJson;
 }

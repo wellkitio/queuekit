@@ -6,8 +6,8 @@ import 'package:queuekit/queuekit.dart';
 typedef EventSerializers = Map<
     String,
     ({
-      HydratedEvent<Object?> Function(Map<String, dynamic> json) fromJson,
-      Map<String, dynamic> Function(HydratedEvent<Object?> event) toJson,
+      Event<Object?> Function(Map<String, dynamic> json) fromJson,
+      Map<String, dynamic> Function(Event<Object?> event) toJson,
     })>;
 
 base class HydratedQueue extends Queue {
@@ -27,7 +27,7 @@ base class HydratedQueue extends Queue {
   final FutureOr<String?> Function() hydrateRetryQueue;
 
   @override
-  Future<void> add(covariant HydratedEvent event) async {
+  Future<void> add(Event event) async {
     super.add(event);
     await _save();
   }
@@ -39,8 +39,14 @@ base class HydratedQueue extends Queue {
   }
 
   @override
-  Future<void> addToRetryQueue(String id, covariant HydratedEvent event, Duration duration) async {
+  Future<void> addToRetryQueue(String id, Event event, Duration duration) async {
     super.addToRetryQueue(id, event, duration);
+    await _save();
+  }
+
+  @override
+  Future<void> removeFromRetryQueue(String id) async {
+    super.removeFromRetryQueue(id);
     await _save();
   }
 
@@ -81,7 +87,8 @@ base class HydratedQueue extends Queue {
       final serializer = eventSerializers[event.type];
       if (serializer == null) continue;
       currentQueueJson.add({
-        ...serializer.toJson(event as HydratedEvent),
+        ...serializer.toJson(event),
+        'id': event.id,
         'type': event.type,
       });
     }
@@ -94,7 +101,7 @@ base class HydratedQueue extends Queue {
       if (serializer == null) continue;
       retryQueueJson[key] = {
         'type': value.event.type,
-        'event': serializer.toJson(value.event as HydratedEvent),
+        'event': serializer.toJson(value.event),
         'nextExecutionTime': value.nextExecutionTime.toIso8601String(),
       };
     }

@@ -1,13 +1,12 @@
 import 'package:queuekit/queuekit.dart';
-import 'package:queuekit/src/exceptions.dart';
 
 /// [RetryConfig] is an abstract class that provides the configuration for retrying a task.
 abstract base class RetryConfig {
-  RetryConfig();
+  RetryConfig({required this.maxRetries});
 
   /// [maxRetries] is the maximum number of retries that will be attempted.
   /// If it's less than 0, it will retry indefinitely, and [retryCount] will never be incremented.
-  int get maxRetries;
+  int maxRetries;
 
   /// [retryCount] is the number of retries that have been attempted. It starts at 0.
   int retryCount = 0;

@@ -22,7 +22,7 @@ final exampleEventSerializer = JsonSerializer(
   },
 );
 
-class ExampleEvent extends HydratedEvent<String> {
+class ExampleEvent extends Event<String> {
   @override
   String get id => 'id';
 
@@ -101,21 +101,22 @@ class _MainAppState extends State<MainApp> {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-          body: Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (data.isEmpty) const Text('Press the button to add an event'),
-                for (final item in data) Text(item),
-              ],
-            ),
+        body: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (data.isEmpty) const Text('Press the button to add an event'),
+              for (final item in data) Text(item),
+            ],
           ),
-          floatingActionButton: FloatingActionButton(
-            onPressed: () {
-              queue.add(ExampleEvent());
-            },
-            child: const Icon(Icons.add),
-          )),
+        ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () {
+            queue.add(ExampleEvent());
+          },
+          child: const Icon(Icons.add),
+        ),
+      ),
     );
   }
 }
