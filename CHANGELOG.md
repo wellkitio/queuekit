@@ -24,8 +24,9 @@ Packages with other changes:
  - **BREAKING** **CHORE**: require Dart SDK `^3.11.0`.
  - **BREAKING** **REFACTOR**: `Queue.waitFor` throws synchronously when the queue is already disposed.
  - **REFACTOR**: `HydratedQueue.hydrate` returns `Future<void>` instead of `FutureOr<void>`.
- - **CHORE**: upgrade dependencies.
- - **CHORE**: reformat code with the Dart 3.11 formatter.
+ - **REFACTOR**: reformat code with the Dart 3.11 formatter.
+ - **TEST**: restructure tests with Given/When/Then.
+ - **CHORE**: upgrade dependencies, raising the lower bounds of `meta` to `^1.17.0` and `uuid` to `^4.6.0`.
  - **CHORE**: replace melos, fvm and script_runner with dpk and asdf.
  - **CHORE**: add the dpk agent skill.
  - **CHORE**: remove IDE settings from the repository.
