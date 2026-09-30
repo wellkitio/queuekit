@@ -1,194 +1,166 @@
 import 'package:queuekit/queuekit.dart';
 import 'package:test/test.dart';
 
-class EventA extends Event<Object?> {
-  @override
-  LinearRetryConfig? retryConfig = LinearRetryConfig(
-    maxRetries: 10,
-    delay: const Duration(seconds: 1),
-  );
-
-  @override
-  Future<Object?> run() async {
-    return "EventA";
-  }
-
-  @override
-  String get type => 'EventA';
-
-  @override
-  String get id => 'eventAid';
-}
-
-class EventB extends Event {
-  @override
-  RetryConfig? retryConfig = ExponentialBackoffRetryConfig(
-    maxRetries: 10,
-    delay: const Duration(seconds: 1),
-    multiplier: 2,
-  );
-
-  @override
-  Future<Object?> run() async {
-    return null;
-  }
-
-  @override
-  String get type => 'EventB';
-
-  @override
-  String get id => 'eventBid';
-}
-
-class FailingEventOnFirstTry extends Event<Object?> {
-  @override
-  LinearRetryConfig? retryConfig = LinearRetryConfig(
-    maxRetries: 10,
-    delay: const Duration(milliseconds: 50),
-  );
-
-  int count = 0;
-
-  @override
-  Future<Object?> run() async {
-    count++;
-    if (retryConfig!.retryCount == 0) {
-      throw Exception('Failed on first try');
-    } else {
-      return null;
-    }
-  }
-
-  @override
-  String get type => 'FailingEventOnFirstTry';
-
-  @override
-  String get id => 'id';
-}
+import 'utils/events.dart';
 
 void main() {
-  group('Queue', () {
-    test('Events should be executed', () async {
-      final qsl = QueueStartListenable();
-      qsl.start();
-      final queue = Queue(qsl);
-      final eventA = EventA();
-      final eventB = EventB();
+  group('Given a started Queue', () {
+    late Queue queue;
 
-      expect(queue.currentQueue.length, equals(0));
-      queue.add(eventA);
-      expect(queue.currentQueue.length, equals(1));
-      queue.add(eventB);
-      expect(queue.currentQueue.length, equals(2));
-
-      await Future.delayed(const Duration(milliseconds: 10));
-
-      expect(queue.currentQueue.length, equals(0));
+    setUp(() {
+      queue = startedQueue();
     });
 
-    test('Events should be executed in order they are added', () async {
-      final qsl = QueueStartListenable();
-      qsl.start();
-      final queue = Queue(qsl);
-      final eventA = EventA();
-      final eventB = EventB();
-
-      int count = 0;
-      queue.listenAll((params) {
-        if (count == 0) {
-          expect(params.event, isA<EventA>());
-          count++;
-        } else {
-          expect(params.event, isA<EventB>());
-        }
-      });
-
-      queue.add(eventA);
-      queue.add(eventB);
-
-      await Future.delayed(const Duration(milliseconds: 10));
-
-      expect(queue.currentQueue.length, equals(0));
+    test('Then the current queue is empty', () {
+      expect(queue.currentQueue, isEmpty);
     });
 
-    test('listenWhere should only emit the specified event type', () async {
-      final qsl = QueueStartListenable();
-      qsl.start();
-      final queue = Queue(qsl);
-      final eventA = EventA();
-      final eventB = EventB();
+    test('When an event is added then it is placed in the current queue', () {
+      queue.add(EventA());
 
-      int count = 0;
-      queue.listenWhere<EventA, Object?>((params) {
-        if (count == 0) {
-          expect(params.event, isA<EventA>());
-          count++;
-        } else {
-          fail('${params.event.type} should not be emitted');
-        }
-      });
-
-      queue.add(eventA);
-      queue.add(eventB);
-
-      await Future.delayed(const Duration(milliseconds: 10));
-
-      expect(queue.currentQueue.length, equals(0));
+      expect(queue.currentQueue, hasLength(1));
     });
 
-    test('Events should be retried based on the retry config', () async {
-      final qsl = QueueStartListenable();
-      qsl.start();
-      final queue = Queue(qsl);
-      final event = FailingEventOnFirstTry();
+    test('When two events are added then both are placed in the current queue', () {
+      queue.add(EventA());
+      queue.add(EventB());
 
-      int count = 0;
+      expect(queue.currentQueue, hasLength(2));
+    });
+
+    test('When two events are added and processed then the current queue is empty', () async {
+      queue.add(EventA());
+      queue.add(EventB());
+      await Future.delayed(processingTime);
+
+      expect(queue.currentQueue, isEmpty);
+    });
+
+    test(
+      'When waiting for an added event then it completes with the result of that event',
+      () async {
+        final eventA = EventA();
+        queue.add(eventA);
+        queue.add(EventB());
+
+        expect(await queue.waitFor<EventA, Object?>(eventA), equals('EventA'));
+      },
+    );
+  });
+
+  group('Given a started Queue with a listenAll listener', () {
+    late Queue queue;
+    late List<QueueListenerResult> results;
+
+    setUp(() {
+      queue = startedQueue();
+      results = [];
+      queue.listenAll(results.add);
+    });
+
+    test('When two events are added and processed then they are emitted in the order they were '
+        'added', () async {
+      queue.add(EventA());
+      queue.add(EventB());
+      await Future.delayed(processingTime);
+
+      expect(results.map((result) => result.event), [isA<EventA>(), isA<EventB>()]);
+    });
+  });
+
+  group('Given a started Queue with a listenWhere listener for EventA', () {
+    late Queue queue;
+    late List<QueueListenerResult<EventA, Object?>> results;
+
+    setUp(() {
+      queue = startedQueue();
+      results = [];
+      queue.listenWhere<EventA, Object?>(results.add);
+    });
+
+    test('When events of different types are added and processed then only EventA is '
+        'emitted', () async {
+      queue.add(EventA());
+      queue.add(EventB());
+      await Future.delayed(processingTime);
+
+      expect(results.map((result) => result.event), [isA<EventA>()]);
+    });
+  });
+
+  group('Given a started Queue with an event that fails on its first try', () {
+    late Queue queue;
+    late FailingEventOnFirstTry event;
+    late List<QueueListenerResult> results;
+    late List<EventFailedException> errors;
+
+    setUp(() {
+      queue = startedQueue();
+      event = FailingEventOnFirstTry();
+      results = [];
+      errors = [];
       queue.listenAll(
-        (params) {
-          if (count == 0) {
-            fail('Event should not be successful on first try');
-          } else {
-            expect(params.event, isA<FailingEventOnFirstTry>());
-            expect(params.result, isNull);
-          }
-        },
+        results.add,
         onError: (event, error, stackTrace) {
-          if (count == 0) {
-            expect(event, isA<FailingEventOnFirstTry>());
-            count++;
-          } else {
-            fail('Event should not fail on retry');
-          }
+          errors.add(error);
         },
       );
-
-      queue.add(event);
-
-      await Future.delayed(const Duration(milliseconds: 1));
-
-      expect(queue.currentQueue.length, equals(0));
-      expect(queue.retryQueue.length, equals(1));
-
-      await Future.delayed(const Duration(milliseconds: 60));
-
-      expect(event.retryConfig?.retryCount, equals(1));
-      expect(queue.currentQueue.length, equals(0));
-      expect(queue.retryQueue.length, equals(0));
     });
 
-    test('waitFor', () async {
-      final qsl = QueueStartListenable();
-      qsl.start();
-      final queue = Queue(qsl);
-      final eventA = EventA();
-      final eventB = EventB();
+    group('When the event is added and fails', () {
+      setUp(() async {
+        queue.add(event);
+        await Future.delayed(const Duration(milliseconds: 1));
+      });
 
-      queue.add(eventA);
-      queue.add(eventB);
+      test('Then it is removed from the current queue', () {
+        expect(queue.currentQueue, isEmpty);
+      });
 
-      final result = await queue.waitFor<EventA, Object?>(eventA);
+      test('Then it is placed in the retry queue', () {
+        expect(queue.retryQueue, hasLength(1));
+      });
 
-      expect(result, equals('EventA'));
+      test('Then the failure is emitted as an error', () {
+        expect(errors.map((error) => error.event), [isA<FailingEventOnFirstTry>()]);
+      });
+
+      test('Then no result is emitted', () {
+        expect(results, isEmpty);
+      });
+    });
+
+    group('When the event is added and its retry delay has passed', () {
+      setUp(() async {
+        queue.add(event);
+        await Future.delayed(const Duration(milliseconds: 70));
+      });
+
+      test('Then the retry count is 1', () {
+        expect(event.retryConfig?.retryCount, equals(1));
+      });
+
+      test('Then the current queue is empty', () {
+        expect(queue.currentQueue, isEmpty);
+      });
+
+      test('Then the retry queue is empty', () {
+        expect(queue.retryQueue, isEmpty);
+      });
+
+      test('Then the retried event is emitted with its result', () {
+        expect(results.single.event, isA<FailingEventOnFirstTry>());
+        expect(results.single.result, isNull);
+      });
+
+      test('Then the event does not fail again', () {
+        expect(errors, hasLength(1));
+      });
     });
   });
 }
+
+/// Long enough for a started queue to process its events.
+const processingTime = Duration(milliseconds: 10);
+
+Queue startedQueue() => Queue(QueueStartListenable()..start());

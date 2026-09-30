@@ -2,42 +2,50 @@ import 'package:queuekit/queuekit.dart';
 import 'package:test/test.dart';
 
 void main() {
-  group('LinearRetryConfig', () {
-    test('initial duration should be 0', () {
-      final c = LinearRetryConfig(delay: const Duration(seconds: 1), maxRetries: 10);
+  group('Given a LinearRetryConfig with a delay of 1 second', () {
+    const delay = Duration(seconds: 1);
+    const maxRetries = 10;
+    late LinearRetryConfig config;
 
-      expect(c.minimumDurationForCurrentRetry(), equals(Duration.zero));
+    setUp(() {
+      config = LinearRetryConfig(delay: delay, maxRetries: maxRetries);
     });
 
-    test('durationForRetry should be able to calculate for any arbitrary retry count', () {
-      final c = LinearRetryConfig(delay: const Duration(seconds: 1), maxRetries: 10);
-
-      expect(c.minimumDurationForRetry(0), equals(Duration.zero));
-      expect(c.minimumDurationForRetry(1), equals(const Duration(seconds: 1)));
-      expect(c.minimumDurationForRetry(2), equals(const Duration(seconds: 2)));
-      expect(c.minimumDurationForRetry(3), equals(const Duration(seconds: 3)));
+    test('Then the minimum duration for the current retry is zero', () {
+      expect(config.minimumDurationForCurrentRetry(), equals(Duration.zero));
     });
 
-    test('durationForCurrentRetry should increase linearly', () {
-      final c = LinearRetryConfig(delay: const Duration(seconds: 1), maxRetries: 10);
-
-      expect(c.minimumDurationForCurrentRetry(), equals(Duration.zero));
-      c.retry();
-      expect(c.minimumDurationForCurrentRetry(), equals(const Duration(seconds: 1)));
-      c.retry();
-      expect(c.minimumDurationForCurrentRetry(), equals(const Duration(seconds: 2)));
-      c.retry();
-      expect(c.minimumDurationForCurrentRetry(), equals(const Duration(seconds: 3)));
+    test('When calculating the minimum duration for arbitrary retry counts then it increases '
+        'linearly', () {
+      expect(config.minimumDurationForRetry(0), equals(Duration.zero));
+      expect(config.minimumDurationForRetry(1), equals(const Duration(seconds: 1)));
+      expect(config.minimumDurationForRetry(2), equals(const Duration(seconds: 2)));
+      expect(config.minimumDurationForRetry(3), equals(const Duration(seconds: 3)));
     });
 
-    test('serializer should be able to serialize and deserialize', () {
-      final c = LinearRetryConfig(delay: const Duration(seconds: 1), maxRetries: 10);
+    test('When retried then the minimum duration for the current retry increases linearly', () {
+      config.retry();
+      expect(config.minimumDurationForCurrentRetry(), equals(const Duration(seconds: 1)));
+      config.retry();
+      expect(config.minimumDurationForCurrentRetry(), equals(const Duration(seconds: 2)));
+      config.retry();
+      expect(config.minimumDurationForCurrentRetry(), equals(const Duration(seconds: 3)));
+    });
 
-      final json = c.serializer.toJson(c);
-      final c2 = c.serializer.fromJson(json);
+    group('When serialized and deserialized', () {
+      late LinearRetryConfig restored;
 
-      expect(c2.delay, equals(const Duration(seconds: 1)));
-      expect(c2.maxRetries, equals(10));
+      setUp(() {
+        restored = config.serializer.fromJson(config.serializer.toJson(config));
+      });
+
+      test('Then the delay is preserved', () {
+        expect(restored.delay, equals(delay));
+      });
+
+      test('Then maxRetries is preserved', () {
+        expect(restored.maxRetries, equals(maxRetries));
+      });
     });
   });
 }
