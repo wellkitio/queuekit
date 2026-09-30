@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "dpk": {
+      "source": "./skills/dpk",
+      "sourceType": "local",
+      "computedHash": "1e3694527c5b7ec56e4143821bc9aad5e39c203258b533312bd5b708ce9eacad"
+    }
+  }
+}
