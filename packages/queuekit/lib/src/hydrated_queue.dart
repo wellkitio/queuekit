@@ -3,12 +3,14 @@ import 'dart:convert';
 
 import 'package:queuekit/queuekit.dart';
 
-typedef EventSerializers = Map<
-    String,
-    ({
-      Event<Object?> Function(Map<String, dynamic> json) fromJson,
-      Map<String, dynamic> Function(Event<Object?> event) toJson,
-    })>;
+typedef EventSerializers =
+    Map<
+      String,
+      ({
+        Event<Object?> Function(Map<String, dynamic> json) fromJson,
+        Map<String, dynamic> Function(Event<Object?> event) toJson,
+      })
+    >;
 
 base class HydratedQueue extends Queue {
   HydratedQueue(
@@ -21,7 +23,10 @@ base class HydratedQueue extends Queue {
   });
 
   final EventSerializers eventSerializers;
+  // Save callbacks may be synchronous or asynchronous.
+  // ignore: avoid_futureor_void
   final FutureOr<void> Function(String data) saveCurrentQueue;
+  // ignore: avoid_futureor_void
   final FutureOr<void> Function(String data) saveRetryQueue;
   final FutureOr<String?> Function() hydrateCurrentQueue;
   final FutureOr<String?> Function() hydrateRetryQueue;
@@ -50,7 +55,7 @@ base class HydratedQueue extends Queue {
     await _save();
   }
 
-  FutureOr<void> hydrate() async {
+  Future<void> hydrate() async {
     final rawCurrentQueue = await hydrateCurrentQueue();
     if (rawCurrentQueue != null) {
       final currentQueue = jsonDecode(rawCurrentQueue) as List;
@@ -81,16 +86,12 @@ base class HydratedQueue extends Queue {
     }
   }
 
-  FutureOr<void> _save() async {
+  Future<void> _save() async {
     final List<Map<String, dynamic>> currentQueueJson = [];
     for (final event in currentQueue) {
       final serializer = eventSerializers[event.type];
       if (serializer == null) continue;
-      currentQueueJson.add({
-        ...serializer.toJson(event),
-        'id': event.id,
-        'type': event.type,
-      });
+      currentQueueJson.add({...serializer.toJson(event), 'id': event.id, 'type': event.type});
     }
     final currentQueueString = jsonEncode(currentQueueJson);
     await saveCurrentQueue(currentQueueString);

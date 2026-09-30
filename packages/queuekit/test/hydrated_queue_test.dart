@@ -72,14 +72,8 @@ void main() {
       final queue = HydratedQueue(
         qsl,
         eventSerializers: {
-          'EventA': (
-            fromJson: (json) => EventA(),
-            toJson: (event) => {},
-          ),
-          'EventB': (
-            fromJson: (json) => EventB(),
-            toJson: (event) => {},
-          ),
+          'EventA': (fromJson: (json) => EventA(), toJson: (event) => {}),
+          'EventB': (fromJson: (json) => EventB(), toJson: (event) => {}),
           'FailingEventOnFirstTry': (
             fromJson: (json) => FailingEventOnFirstTry(),
             toJson: (event) => {},
@@ -101,8 +95,8 @@ void main() {
             },
           });
         },
-        saveCurrentQueue: (json) async {},
-        saveRetryQueue: (data) async {},
+        saveCurrentQueue: (json) {},
+        saveRetryQueue: (data) {},
       );
 
       expect(queue.currentQueue.length, equals(0));
@@ -119,14 +113,8 @@ void main() {
       final queue = HydratedQueue(
         qsl,
         eventSerializers: {
-          'EventA': (
-            fromJson: (json) => EventA(),
-            toJson: (event) => {},
-          ),
-          'EventB': (
-            fromJson: (json) => EventB(),
-            toJson: (event) => {},
-          ),
+          'EventA': (fromJson: (json) => EventA(), toJson: (event) => {}),
+          'EventB': (fromJson: (json) => EventB(), toJson: (event) => {}),
           'FailingEventOnFirstTry': (
             fromJson: (json) => FailingEventOnFirstTry(),
             toJson: (event) => {},
@@ -138,7 +126,7 @@ void main() {
         hydrateRetryQueue: () {
           return '{}';
         },
-        saveCurrentQueue: (jsonString) async {
+        saveCurrentQueue: (jsonString) {
           final json = jsonDecode(jsonString) as List;
           switch (saveCurrentQueueCount) {
             case 0:
@@ -162,7 +150,7 @@ void main() {
           }
           saveCurrentQueueCount++;
         },
-        saveRetryQueue: (dataString) async {
+        saveRetryQueue: (dataString) {
           final data = jsonDecode(dataString) as Map;
           if (saveRetryQueueCount case 5 || 6) {
             expect(data.length, equals(1));

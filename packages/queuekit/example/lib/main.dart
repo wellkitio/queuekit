@@ -16,9 +16,7 @@ final exampleEventSerializer = JsonSerializer(
       );
   },
   toJson: (event) {
-    return {
-      'retryConfig': linearRetryConfigSerializer.toJson(event.retryConfig!),
-    };
+    return {'retryConfig': linearRetryConfigSerializer.toJson(event.retryConfig!)};
   },
 );
 
@@ -30,7 +28,10 @@ class ExampleEvent extends Event<String> {
   String get type => 'ExampleEvent';
 
   @override
-  LinearRetryConfig? retryConfig = LinearRetryConfig(maxRetries: 10, delay: const Duration(seconds: 1));
+  LinearRetryConfig? retryConfig = LinearRetryConfig(
+    maxRetries: 10,
+    delay: const Duration(seconds: 1),
+  );
 
   @override
   Future<String> run() {

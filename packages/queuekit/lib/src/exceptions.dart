@@ -1,8 +1,7 @@
 import 'package:queuekit/queuekit.dart';
 
 final class RetryExceededException implements Exception {
-  RetryExceededException({required this.maxRetries})
-      : stackTrace = StackTrace.current;
+  RetryExceededException({required this.maxRetries}) : stackTrace = StackTrace.current;
 
   final int maxRetries;
   final StackTrace stackTrace;
@@ -14,11 +13,8 @@ final class RetryExceededException implements Exception {
 }
 
 final class EventFailedException<T> implements Exception {
-  EventFailedException({
-    required this.event,
-    required this.error,
-    required this.stackTrace,
-  }) : super();
+  EventFailedException({required this.event, required this.error, required this.stackTrace})
+    : super();
 
   final Event<T> event;
   final Object error;

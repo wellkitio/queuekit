@@ -36,5 +36,6 @@ final class ExponentialBackoffRetryConfig extends RetryConfig {
   }
 
   @override
-  JsonSerializer<ExponentialBackoffRetryConfig> serializer = exponentialBackoffRetryConfigSerializer;
+  JsonSerializer<ExponentialBackoffRetryConfig> serializer =
+      exponentialBackoffRetryConfigSerializer;
 }

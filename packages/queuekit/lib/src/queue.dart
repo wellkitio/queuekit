@@ -4,15 +4,9 @@ import 'package:meta/meta.dart';
 import 'package:queuekit/queuekit.dart';
 import 'package:uuid/uuid.dart';
 
-typedef QueueListenerResult<T extends Event<U>, U extends Object?> = ({
-  T event,
-  U result,
-});
-typedef OnError<T extends Event<U>, U extends Object?> = FutureOr<void> Function(
-  T event,
-  EventFailedException error,
-  StackTrace stackTrace,
-);
+typedef QueueListenerResult<T extends Event<U>, U extends Object?> = ({T event, U result});
+typedef OnError<T extends Event<U>, U extends Object?> =
+    FutureOr<void> Function(T event, EventFailedException error, StackTrace stackTrace);
 
 base class Queue extends Stream<QueueListenerResult> {
   Queue(this.startListenable) {
@@ -68,15 +62,18 @@ base class Queue extends Stream<QueueListenerResult> {
     bool? cancelOnError,
   }) {
     _checkDisposed();
-    return _controller.stream.where((result) => result.event is T).cast<QueueListenerResult<T, U>>().listen(
-      onData,
-      onError: (Object e, StackTrace s) {
-        if (onError == null) return;
-        _filterOnError<T, U>(e, s, onError);
-      },
-      onDone: onDone,
-      cancelOnError: cancelOnError,
-    );
+    return _controller.stream
+        .where((result) => result.event is T)
+        .cast<QueueListenerResult<T, U>>()
+        .listen(
+          onData,
+          onError: (Object e, StackTrace s) {
+            if (onError == null) return;
+            _filterOnError<T, U>(e, s, onError);
+          },
+          onDone: onDone,
+          cancelOnError: cancelOnError,
+        );
   }
 
   StreamSubscription<QueueListenerResult<Event<Object?>, Object?>> listenAll(
@@ -97,7 +94,7 @@ base class Queue extends Stream<QueueListenerResult> {
     );
   }
 
-  Future<U> waitFor<T extends Event<U>, U extends Object?>(T event) async {
+  Future<U> waitFor<T extends Event<U>, U extends Object?>(T event) {
     _checkDisposed();
     final completer = Completer<U>();
     late StreamSubscription<QueueListenerResult<T, U>> subscription;
@@ -174,12 +171,7 @@ base class Queue extends Stream<QueueListenerResult> {
   void addToRetryQueue(String id, Event event, Duration duration) {
     _checkDisposed();
     final nextExecutionTime = DateTime.now().toUtc().add(duration);
-    retryQueue.addAll({
-      id: (
-        event: event,
-        nextExecutionTime: nextExecutionTime,
-      ),
-    });
+    retryQueue.addAll({id: (event: event, nextExecutionTime: nextExecutionTime)});
   }
 
   @protected

@@ -8,18 +8,12 @@ final linearRetryConfigSerializer = JsonSerializer(
     );
   },
   toJson: (config) {
-    return {
-      'maxRetries': config.maxRetries,
-      'delay': config.delay.inMilliseconds,
-    };
+    return {'maxRetries': config.maxRetries, 'delay': config.delay.inMilliseconds};
   },
 );
 
 final class LinearRetryConfig extends RetryConfig {
-  LinearRetryConfig({
-    required super.maxRetries,
-    required this.delay,
-  });
+  LinearRetryConfig({required super.maxRetries, required this.delay});
 
   final Duration delay;
 
