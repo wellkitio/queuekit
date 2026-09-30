@@ -1,0 +1,27 @@
+version: ^0.8.0
+
+workspace:
+  - packages/*
+  - packages/*/example
+
+catalog:
+  environment:
+    sdk: ^3.11.0
+  resolution: workspace
+
+scripts:
+  analyze:
+    command: dart analyze
+    description: Analyze all packages
+    runInPackages:
+      - packages/*
+  format:
+    command: dart format .
+    description: Format all packages
+    runInPackages:
+      - packages/*
+  test:
+    command: dart test
+    description: Run tests in all packages
+    runInPackages:
+      - packages/*

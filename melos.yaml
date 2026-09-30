@@ -1,9 +1,0 @@
-name: queuekit
-sdkPath: .fvm/flutter_sdk
-
-packages:
-  - packages/*
-
-scripts:
-  test:
-    exec: dart test

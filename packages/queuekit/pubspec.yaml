@@ -3,20 +3,16 @@ description: Queuekit is a task queuing library that supports hydration of tasks
 version: 0.1.0
 repository: https://github.com/wellkitio/queuekit
 
+resolution: workspace
+
 environment:
-  sdk: ^3.3.3
+  sdk: ^3.11.0
 
 dependencies:
-  meta: ^1.0.0
+  meta: ^1.17.0
   state_notifier: ^1.0.0
-  uuid: ^4.4.0
+  uuid: ^4.6.0
 
 dev_dependencies:
-  lint: ^2.3.0
-  script_runner: ^0.7.3
-  test: ^1.24.0
-
-script_runner:
-  scripts:
-    - analyze: dart analyze
-    - format: dart format --line-length 100 --fix lib && dart format --line-length 100 --fix test
+  lint: ^2.12.0
+  test: ^1.31.1
