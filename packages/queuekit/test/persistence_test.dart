@@ -4,8 +4,6 @@ import 'dart:convert';
 import 'package:queuekit/queuekit.dart';
 import 'package:test/test.dart';
 
-import 'utils/events.dart';
-
 void main() {
   group('Given a LinearRetryConfig that has been retried twice', () {
     late LinearRetryConfig config;
