@@ -3,6 +3,10 @@ import 'dart:convert';
 
 import 'package:queuekit/queuekit.dart';
 
+/// The serializers a [HydratedQueue] uses, keyed by [Event.type].
+///
+/// `toJson` must include everything needed to rebuild the event, including its id and retry
+/// config. `fromJson` receives that map back.
 typedef EventSerializers =
     Map<
       String,
@@ -12,6 +16,11 @@ typedef EventSerializers =
       })
     >;
 
+/// A [Queue] that saves itself whenever it changes and restores itself with [hydrate].
+///
+/// The current queue and the retry queue are saved separately, as JSON strings, through
+/// [saveCurrentQueue] and [saveRetryQueue], and read back through [hydrateCurrentQueue] and
+/// [hydrateRetryQueue]. Saves are written in the order they happen, one at a time.
 base class HydratedQueue extends Queue {
   HydratedQueue(
     super.startListenable, {
@@ -22,14 +31,24 @@ base class HydratedQueue extends Queue {
     required this.hydrateRetryQueue,
   });
 
+  /// The serializer for each event type. Events of other types are not persisted.
   final EventSerializers eventSerializers;
-  // Save callbacks may be synchronous or asynchronous.
+
+  /// Stores the serialized current queue. May be synchronous or asynchronous.
   // ignore: avoid_futureor_void
   final FutureOr<void> Function(String data) saveCurrentQueue;
+
+  /// Stores the serialized retry queue. May be synchronous or asynchronous.
   // ignore: avoid_futureor_void
   final FutureOr<void> Function(String data) saveRetryQueue;
+
+  /// Returns the last string passed to [saveCurrentQueue], or `null` if there is none.
   final FutureOr<String?> Function() hydrateCurrentQueue;
+
+  /// Returns the last string passed to [saveRetryQueue], or `null` if there is none.
   final FutureOr<String?> Function() hydrateRetryQueue;
+
+  Future<void> _pendingSaves = Future.value();
 
   @override
   Future<void> add(Event event, {Iterable<Event> dependsOn = const []}) async {
@@ -44,8 +63,8 @@ base class HydratedQueue extends Queue {
   }
 
   @override
-  Future<void> addToRetryQueue(String id, Event event, Duration duration) async {
-    super.addToRetryQueue(id, event, duration);
+  Future<void> addToRetryQueue(String id, Event event, DateTime nextExecutionTime) async {
+    super.addToRetryQueue(id, event, nextExecutionTime);
     await _save();
   }
 
@@ -55,54 +74,53 @@ base class HydratedQueue extends Queue {
     await _save();
   }
 
+  /// Restores the events saved by a previous instance.
+  ///
+  /// Call it once, before starting the queue, so restored events run before new ones. Retries
+  /// whose time has come are placed on the current queue; the others wait for their turn.
   Future<void> hydrate() async {
     final rawCurrentQueue = await hydrateCurrentQueue();
     if (rawCurrentQueue != null) {
-      final currentQueue = jsonDecode(rawCurrentQueue) as List;
-      for (final json in currentQueue.cast<Map<String, dynamic>>()) {
-        final serializer = eventSerializers[json['type']];
-        if (serializer == null) continue;
-        final event = serializer.fromJson(json);
+      final entries = (jsonDecode(rawCurrentQueue) as List).cast<Map<String, dynamic>>();
+      for (final json in entries) {
+        final event = _eventFromJson(json['type'] as String?, json);
+        if (event == null) continue;
         _hydrateDependencies(event, json);
-        this.currentQueue.add(event);
+        addToCurrentQueue(event);
       }
     }
 
     final rawRetryQueue = await hydrateRetryQueue();
     if (rawRetryQueue != null) {
-      final retryQueue = jsonDecode(rawRetryQueue) as Map<String, dynamic>;
-      final skipped = <String>{};
-      for (final MapEntry(:key, :value)
-          in retryQueue.cast<String, Map<String, dynamic>>().entries) {
-        final serializer = eventSerializers[value['type']];
-        if (serializer == null) continue;
-        final event = serializer.fromJson(value['event'] as Map<String, dynamic>);
-        _hydrateDependencies(event, value);
-        final nextExecutionTime = DateTime.parse(value['nextExecutionTime'] as String);
-        final retryConfig = event.retryConfig;
-        final exceededRetries =
-            retryConfig != null && retryConfig.retryCount >= retryConfig.maxRetries;
-        if (exceededRetries || (dependencies[key]?.any(skipped.contains) ?? false)) {
-          skipped.add(key);
-          dependencies.remove(key);
-          continue;
-        }
-        final now = DateTime.now();
-        if (nextExecutionTime.difference(now) <= Duration.zero) {
-          currentQueue.add(event);
+      final entries = (jsonDecode(rawRetryQueue) as Map<String, dynamic>)
+          .cast<String, Map<String, dynamic>>();
+      for (final MapEntry(key: id, value: json) in entries.entries) {
+        final event = _eventFromJson(
+          json['type'] as String?,
+          json['event'] as Map<String, dynamic>,
+        );
+        if (event == null) continue;
+        _hydrateDependencies(event, json);
+        final nextExecutionTime = DateTime.parse(json['nextExecutionTime'] as String);
+        if (nextExecutionTime.isAfter(DateTime.now())) {
+          super.addToRetryQueue(id, event, nextExecutionTime);
         } else {
-          this.retryQueue[key] = (event: event, nextExecutionTime: nextExecutionTime);
+          addToCurrentQueue(event);
         }
       }
       // Events that are waiting for a dependency do not get a timer of their own; they are
       // re-queued when the dependency is retried.
-      for (final MapEntry(:key, value: (:event, :nextExecutionTime)) in this.retryQueue.entries) {
-        if (dependencies[key]?.any(this.retryQueue.containsKey) ?? false) continue;
-        addTimerForRetry(key, event, nextExecutionTime.difference(DateTime.now()));
+      for (final MapEntry(key: id, value: (:event, :nextExecutionTime)) in retryQueue.entries) {
+        if (dependencies[id]?.any(retryQueue.containsKey) ?? false) continue;
+        addTimerForRetry(id, event, nextExecutionTime.difference(DateTime.now()));
       }
     }
 
     releaseUnblockedEvents();
+  }
+
+  Event? _eventFromJson(String? type, Map<String, dynamic> json) {
+    return eventSerializers[type]?.fromJson(json);
   }
 
   void _hydrateDependencies(Event event, Map<String, dynamic> json) {
@@ -111,34 +129,33 @@ base class HydratedQueue extends Queue {
     dependencies[event.id] = dependsOn.toSet();
   }
 
-  Future<void> _save() async {
-    final List<Map<String, dynamic>> currentQueueJson = [];
-    for (final event in currentQueue) {
-      final serializer = eventSerializers[event.type];
-      if (serializer == null) continue;
-      currentQueueJson.add({
-        ...serializer.toJson(event),
-        'id': event.id,
-        'type': event.type,
-        ..._dependsOnJson(event),
-      });
-    }
-    final currentQueueString = jsonEncode(currentQueueJson);
-    await saveCurrentQueue(currentQueueString);
-
-    final Map<String, Map<String, dynamic>> retryQueueJson = {};
-    for (final MapEntry(:key, :value) in retryQueue.entries) {
-      final serializer = eventSerializers[value.event.type];
-      if (serializer == null) continue;
-      retryQueueJson[key] = {
-        'type': value.event.type,
-        'event': serializer.toJson(value.event),
-        'nextExecutionTime': value.nextExecutionTime.toIso8601String(),
-        ..._dependsOnJson(value.event),
-      };
-    }
-    final retryQueueString = jsonEncode(retryQueueJson);
-    await saveRetryQueue(retryQueueString);
+  /// Serializes both queues now and writes them after the saves that are already in flight, so
+  /// that slow storage never persists an older state over a newer one.
+  Future<void> _save() {
+    final currentQueueJson = jsonEncode([
+      for (final event in currentQueue)
+        if (eventSerializers[event.type] case final serializer?)
+          {
+            ...serializer.toJson(event),
+            'id': event.id,
+            'type': event.type,
+            ..._dependsOnJson(event),
+          },
+    ]);
+    final retryQueueJson = jsonEncode({
+      for (final MapEntry(key: id, value: (:event, :nextExecutionTime)) in retryQueue.entries)
+        if (eventSerializers[event.type] case final serializer?)
+          id: {
+            'type': event.type,
+            'event': serializer.toJson(event),
+            'nextExecutionTime': nextExecutionTime.toIso8601String(),
+            ..._dependsOnJson(event),
+          },
+    });
+    return _pendingSaves = _pendingSaves.then((_) async {
+      await saveCurrentQueue(currentQueueJson);
+      await saveRetryQueue(retryQueueJson);
+    });
   }
 
   Map<String, dynamic> _dependsOnJson(Event event) {

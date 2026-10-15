@@ -70,8 +70,9 @@ void main() async {
 
   startListenable.start(); // Events start running here.
 
-  final result = await queue.waitFor<SendMessage, String>(SendMessage('!'));
-  print(result); // sent: !
+  final event = SendMessage('!');
+  queue.add(event);
+  print(await queue.waitFor<SendMessage, String>(event)); // sent: !
 }
 ```
 
@@ -130,8 +131,9 @@ immediately.
 
 ## Listening for results
 
-`Queue` is a `Stream` of `QueueListenerResult`, a record of `(event: ..., result: ...)`. Every
-successful run emits one.
+`queue.results` is a broadcast `Stream` of `QueueListenerResult`, a record of
+`(event: ..., result: ...)`. Every successful run emits one, and every failure is a stream error.
+The typed helpers below are usually more convenient than listening to it directly.
 
 ```dart
 // Every event, untyped.
@@ -145,9 +147,13 @@ queue.listenWhere<SendMessage, String>((result) {
   final String text = result.result;
 });
 
-// A single event. Completes with its result, or with its EventFailedException.
+// A single event. Completes with its result once it has run, or with its EventFailedException
+// if it fails permanently. A failure that is going to be retried does not complete it.
 final String text = await queue.waitFor<SendMessage, String>(event);
 ```
+
+`waitFor` only works for an event that is added to the queue, before or after the call; for any
+other event the future never completes.
 
 ### Errors
 
@@ -164,7 +170,7 @@ queue.listenWhere<SendMessage, String>(
 );
 ```
 
-`listenWhere` only reports errors for events of the type it listens to. Plain `listen` receives
+`listenWhere` only reports errors for events of the type it listens to. `results.listen` receives
 the `EventFailedException` like any stream error.
 
 An error is emitted for every failed attempt, so an event that is retried twice before it succeeds
@@ -187,7 +193,7 @@ ExponentialBackoffRetryConfig(maxRetries: 3, delay: const Duration(seconds: 1), 
 - `maxRetries` is the number of retries after the first attempt. A negative value retries forever.
 - When an event fails with no retries left it is dropped after its last `EventFailedException`.
 - `retryCount` lives on the config instance, so share a config between events only if you want
-  them to share a retry budget.
+  them to share a retry budget. `canRetry` tells whether a retry is left.
 
 To write your own strategy, extend `RetryConfig` and implement `minimumDurationForRetry`. If you use
 a `HydratedQueue`, also provide a `serializer` so the config can be persisted with its event:
@@ -228,7 +234,7 @@ final upload = queue.findEvents<UploadPhoto>(where: (e) => e.photoId == photoId)
 ```
 
 The lower-level `currentQueue` (a `List<Event>`) and `retryQueue` (a map from id to the event and
-the time of its next attempt) are also available for inspection.
+the time of its next attempt) are also available as read-only views.
 
 ## Dependent events
 
@@ -325,8 +331,10 @@ startListenable.start(); // ...then start.
   saved string, or `null` when nothing was saved yet.
 - `hydrate` restores the current queue, then the retry queue. Retries whose time has already come
   are placed on the current queue; the others wait for their turn. Dependencies are restored too.
-- Retry counts are not part of the built-in serializers, so a restored event gets its full retry
-  budget back.
+  Call it once, before `start()`.
+- The built-in retry config serializers include `retryCount`, so a restored event continues its
+  retry budget and backoff where it left off. Do the same in a custom `RetryConfig.serializer`.
+- Saves are written one at a time, in the order they happened, even when the storage is slow.
 
 ### Storage format
 
@@ -334,7 +342,7 @@ The current queue is saved as a JSON array, one object per event, in queue order
 
 ```json
 [
-  {"photoId": "p1", "id": "e1", "type": "UploadPhoto"},
+  {"photoId": "p1", "id": "e1", "retryConfig": {"maxRetries": 3, "delay": 1000, "retryCount": 0}, "type": "UploadPhoto"},
   {"photoId": "p1", "id": "e2", "type": "SharePhoto", "dependsOn": ["e1"]}
 ]
 ```
@@ -346,7 +354,7 @@ The retry queue is saved as a JSON object keyed by event id, in order:
 
 ```json
 {
-  "e1": {"type": "UploadPhoto", "event": {"photoId": "p1", "id": "e1"}, "nextExecutionTime": "2026-10-15T10:00:00.000Z"},
+  "e1": {"type": "UploadPhoto", "event": {"photoId": "p1", "id": "e1", "retryConfig": {"maxRetries": 3, "delay": 1000, "retryCount": 1}}, "nextExecutionTime": "2026-10-15T10:00:00.000Z"},
   "e2": {"type": "SharePhoto", "event": {"photoId": "p1", "id": "e2"}, "nextExecutionTime": "2026-10-15T10:00:00.000Z", "dependsOn": ["e1"]}
 }
 ```
@@ -368,16 +376,16 @@ and clears the queue. Using the queue afterwards throws a `StateError`.
 | Type | Purpose |
 | --- | --- |
 | `Event<T>` | A unit of work with an `id`, a `type`, an optional `retryConfig` and a `run` method. |
-| `Queue` | Runs events in order. `add`, `pendingEvents`, `findEvent`, `findEvents`, `listenAll`, `listenWhere`, `waitFor`, `dispose`. |
+| `Queue` | Runs events in order. `add`, `pendingEvents`, `findEvent`, `findEvents`, `results`, `listenAll`, `listenWhere`, `waitFor`, `dispose`. |
 | `HydratedQueue` | A `Queue` that persists itself through callbacks and restores with `hydrate`. |
 | `QueueStartListenable` | Starts and pauses a queue: `start`, `pause`, `isStarted`. |
-| `RetryConfig` | Base class for retry strategies: `maxRetries`, `retryCount`, `minimumDurationForRetry`, `serializer`. |
+| `RetryConfig` | Base class for retry strategies: `maxRetries`, `retryCount`, `canRetry`, `minimumDurationForRetry`, `serializer`. |
 | `LinearRetryConfig` | Retries after `delay × retryCount`. |
 | `ExponentialBackoffRetryConfig` | Retries after `delay × multiplier ^ retryCount`. |
 | `JsonSerializer<T>` | A `fromJson`/`toJson` pair, used for retry configs. |
 | `EventSerializers` | The map of event type to serializer pair that `HydratedQueue` takes. |
 | `QueueListenerResult<T, U>` | The `(event, result)` record emitted for each successful run. |
-| `EventFailedException` | Emitted when an event fails; carries the `event`, `error` and `stackTrace`. |
+| `EventFailedException` | Emitted on `results` when an event fails; carries the `event`, `error` and `stackTrace`. |
 | `DependencyFailedException` | The `error` of a dependent that could not run because its `dependency` failed. |
 | `RetryExceededException` | Thrown by `RetryConfig.retry` when called with no retries left. |
 

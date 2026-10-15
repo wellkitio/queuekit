@@ -1,5 +1,6 @@
 import 'package:queuekit/queuekit.dart';
 
+/// Thrown by [RetryConfig.retry] when it is called with no retries left.
 final class RetryExceededException implements Exception {
   RetryExceededException({required this.maxRetries}) : stackTrace = StackTrace.current;
 
@@ -12,9 +13,12 @@ final class RetryExceededException implements Exception {
   }
 }
 
+/// Emitted on [Queue.results] when an event fails.
+///
+/// [error] and [stackTrace] are what [Event.run] threw, or a [DependencyFailedException] when the
+/// event did not run because one of its dependencies failed permanently.
 final class EventFailedException<T> implements Exception {
-  EventFailedException({required this.event, required this.error, required this.stackTrace})
-    : super();
+  EventFailedException({required this.event, required this.error, required this.stackTrace});
 
   final Event<T> event;
   final Object error;
@@ -22,7 +26,7 @@ final class EventFailedException<T> implements Exception {
 
   @override
   String toString() {
-    return 'EventRunFailedException: Event run failed: \n$event\n$error\n$stackTrace';
+    return 'EventFailedException: Event ${event.id} (${event.type}) failed: \n$error\n$stackTrace';
   }
 }
 
