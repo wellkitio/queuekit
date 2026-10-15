@@ -61,3 +61,36 @@ class FailingEventOnFirstTry extends Event<Object?> {
   @override
   String get id => 'id';
 }
+
+/// An event with a configurable [id] that fails its first [failures] runs with an [Exception]
+/// and then completes with its [id].
+class ScriptedEvent extends Event<String> {
+  ScriptedEvent(this.id, {this.failures = 0, this.retryConfig});
+
+  @override
+  final String id;
+
+  /// How many runs fail before the event succeeds.
+  final int failures;
+
+  @override
+  RetryConfig? retryConfig;
+
+  int runs = 0;
+
+  @override
+  Future<String> run() async {
+    runs++;
+    if (runs <= failures) throw Exception('$id failed on run $runs');
+    return id;
+  }
+
+  @override
+  String get type => 'ScriptedEvent';
+}
+
+/// A [LinearRetryConfig] that retries after [failingEventRetryDelay].
+LinearRetryConfig shortRetryConfig({int maxRetries = 10}) =>
+    LinearRetryConfig(maxRetries: maxRetries, delay: failingEventRetryDelay);
+
+const failingEventRetryDelay = Duration(milliseconds: 50);

@@ -25,3 +25,22 @@ final class EventFailedException<T> implements Exception {
     return 'EventRunFailedException: Event run failed: \n$event\n$error\n$stackTrace';
   }
 }
+
+/// The error of an [EventFailedException] emitted for an event that could not run because an
+/// event it depends on failed permanently.
+///
+/// [dependency] is the failed dependency and [error] is the error it failed with. When the
+/// dependency itself failed because of one of its own dependencies, [error] is that dependency's
+/// [DependencyFailedException].
+final class DependencyFailedException implements Exception {
+  DependencyFailedException({required this.dependency, required this.error});
+
+  final Event<Object?> dependency;
+  final Object error;
+
+  @override
+  String toString() {
+    return 'DependencyFailedException: Dependency ${dependency.id} (${dependency.type}) failed: '
+        '\n$error';
+  }
+}

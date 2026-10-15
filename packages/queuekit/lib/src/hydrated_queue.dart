@@ -32,8 +32,8 @@ base class HydratedQueue extends Queue {
   final FutureOr<String?> Function() hydrateRetryQueue;
 
   @override
-  Future<void> add(Event event) async {
-    super.add(event);
+  Future<void> add(Event event, {Iterable<Event> dependsOn = const []}) async {
+    super.add(event, dependsOn: dependsOn);
     await _save();
   }
 
@@ -59,31 +59,56 @@ base class HydratedQueue extends Queue {
     final rawCurrentQueue = await hydrateCurrentQueue();
     if (rawCurrentQueue != null) {
       final currentQueue = jsonDecode(rawCurrentQueue) as List;
-      for (final event in currentQueue.cast<Map<String, dynamic>>()) {
-        final serializer = eventSerializers[event['type']];
+      for (final json in currentQueue.cast<Map<String, dynamic>>()) {
+        final serializer = eventSerializers[json['type']];
         if (serializer == null) continue;
-        this.currentQueue.add(serializer.fromJson(event));
+        final event = serializer.fromJson(json);
+        _hydrateDependencies(event, json);
+        this.currentQueue.add(event);
       }
     }
 
     final rawRetryQueue = await hydrateRetryQueue();
-    if (rawRetryQueue == null) return;
-
-    final retryQueue = jsonDecode(rawRetryQueue) as Map<String, dynamic>;
-    for (final MapEntry(:key, :value) in retryQueue.cast<String, Map<String, dynamic>>().entries) {
-      final serializer = eventSerializers[value['type']];
-      if (serializer == null) continue;
-      final event = serializer.fromJson(value['event'] as Map<String, dynamic>);
-      final nextExecutionTime = DateTime.parse(value['nextExecutionTime'] as String);
-      if (event.retryConfig!.retryCount >= event.retryConfig!.maxRetries) continue;
-      final now = DateTime.now();
-      if (nextExecutionTime.difference(now) <= Duration.zero) {
-        currentQueue.add(event);
-      } else {
-        this.retryQueue[key] = (event: event, nextExecutionTime: nextExecutionTime);
-        addTimerForRetry(key, event, nextExecutionTime.difference(now));
+    if (rawRetryQueue != null) {
+      final retryQueue = jsonDecode(rawRetryQueue) as Map<String, dynamic>;
+      final skipped = <String>{};
+      for (final MapEntry(:key, :value)
+          in retryQueue.cast<String, Map<String, dynamic>>().entries) {
+        final serializer = eventSerializers[value['type']];
+        if (serializer == null) continue;
+        final event = serializer.fromJson(value['event'] as Map<String, dynamic>);
+        _hydrateDependencies(event, value);
+        final nextExecutionTime = DateTime.parse(value['nextExecutionTime'] as String);
+        final retryConfig = event.retryConfig;
+        final exceededRetries =
+            retryConfig != null && retryConfig.retryCount >= retryConfig.maxRetries;
+        if (exceededRetries || (dependencies[key]?.any(skipped.contains) ?? false)) {
+          skipped.add(key);
+          dependencies.remove(key);
+          continue;
+        }
+        final now = DateTime.now();
+        if (nextExecutionTime.difference(now) <= Duration.zero) {
+          currentQueue.add(event);
+        } else {
+          this.retryQueue[key] = (event: event, nextExecutionTime: nextExecutionTime);
+        }
+      }
+      // Events that are waiting for a dependency do not get a timer of their own; they are
+      // re-queued when the dependency is retried.
+      for (final MapEntry(:key, value: (:event, :nextExecutionTime)) in this.retryQueue.entries) {
+        if (dependencies[key]?.any(this.retryQueue.containsKey) ?? false) continue;
+        addTimerForRetry(key, event, nextExecutionTime.difference(DateTime.now()));
       }
     }
+
+    releaseUnblockedEvents();
+  }
+
+  void _hydrateDependencies(Event event, Map<String, dynamic> json) {
+    final dependsOn = (json['dependsOn'] as List?)?.cast<String>();
+    if (dependsOn == null || dependsOn.isEmpty) return;
+    dependencies[event.id] = dependsOn.toSet();
   }
 
   Future<void> _save() async {
@@ -91,7 +116,12 @@ base class HydratedQueue extends Queue {
     for (final event in currentQueue) {
       final serializer = eventSerializers[event.type];
       if (serializer == null) continue;
-      currentQueueJson.add({...serializer.toJson(event), 'id': event.id, 'type': event.type});
+      currentQueueJson.add({
+        ...serializer.toJson(event),
+        'id': event.id,
+        'type': event.type,
+        ..._dependsOnJson(event),
+      });
     }
     final currentQueueString = jsonEncode(currentQueueJson);
     await saveCurrentQueue(currentQueueString);
@@ -104,9 +134,16 @@ base class HydratedQueue extends Queue {
         'type': value.event.type,
         'event': serializer.toJson(value.event),
         'nextExecutionTime': value.nextExecutionTime.toIso8601String(),
+        ..._dependsOnJson(value.event),
       };
     }
     final retryQueueString = jsonEncode(retryQueueJson);
     await saveRetryQueue(retryQueueString);
+  }
+
+  Map<String, dynamic> _dependsOnJson(Event event) {
+    final dependsOn = dependencies[event.id];
+    if (dependsOn == null || dependsOn.isEmpty) return const {};
+    return {'dependsOn': dependsOn.toList()};
   }
 }
