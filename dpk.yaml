@@ -1,4 +1,4 @@
-version: ^0.8.0
+version: ^1.0.0
 
 workspace:
   - packages/*
@@ -13,15 +13,15 @@ scripts:
   analyze:
     command: dart analyze
     description: Analyze all packages
-    runInPackages:
+    run_in_packages:
       - packages/*
   format:
     command: dart format .
     description: Format all packages
-    runInPackages:
+    run_in_packages:
       - packages/*
   test:
     command: dart test
     description: Run tests in all packages
-    runInPackages:
+    run_in_packages:
       - packages/*

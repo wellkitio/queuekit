@@ -1,17 +1,24 @@
 import 'package:queuekit/queuekit.dart';
 
+/// The [JsonSerializer] of [LinearRetryConfig]. Persists `maxRetries`, `delay` in milliseconds
+/// and `retryCount`.
 final linearRetryConfigSerializer = JsonSerializer(
   fromJson: (json) {
     return LinearRetryConfig(
       maxRetries: json['maxRetries'] as int,
       delay: Duration(milliseconds: json['delay'] as int),
-    );
+    )..retryCount = json['retryCount'] as int? ?? 0;
   },
   toJson: (config) {
-    return {'maxRetries': config.maxRetries, 'delay': config.delay.inMilliseconds};
+    return {
+      'maxRetries': config.maxRetries,
+      'delay': config.delay.inMilliseconds,
+      'retryCount': config.retryCount,
+    };
   },
 );
 
+/// Retries after `delay × retryCount`: [delay], then twice [delay], and so on.
 final class LinearRetryConfig extends RetryConfig {
   LinearRetryConfig({required super.maxRetries, required this.delay});
 
@@ -23,5 +30,5 @@ final class LinearRetryConfig extends RetryConfig {
   }
 
   @override
-  JsonSerializer<LinearRetryConfig> serializer = linearRetryConfigSerializer;
+  JsonSerializer<LinearRetryConfig> get serializer => linearRetryConfigSerializer;
 }

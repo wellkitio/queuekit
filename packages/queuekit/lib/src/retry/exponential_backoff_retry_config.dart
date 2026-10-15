@@ -2,23 +2,28 @@ import 'dart:math';
 
 import 'package:queuekit/queuekit.dart';
 
+/// The [JsonSerializer] of [ExponentialBackoffRetryConfig]. Persists `maxRetries`, `delay` in
+/// milliseconds, `multiplier` and `retryCount`.
 final exponentialBackoffRetryConfigSerializer = JsonSerializer(
   fromJson: (json) {
     return ExponentialBackoffRetryConfig(
       maxRetries: json['maxRetries'] as int,
       delay: Duration(milliseconds: json['delay'] as int),
-      multiplier: json['multiplier'] as double,
-    );
+      multiplier: (json['multiplier'] as num).toDouble(),
+    )..retryCount = json['retryCount'] as int? ?? 0;
   },
   toJson: (config) {
     return {
       'maxRetries': config.maxRetries,
       'delay': config.delay.inMilliseconds,
       'multiplier': config.multiplier,
+      'retryCount': config.retryCount,
     };
   },
 );
 
+/// Retries after `delay × multiplier ^ retryCount`: with a [multiplier] of 2, [delay] × 2, then
+/// [delay] × 4, and so on.
 final class ExponentialBackoffRetryConfig extends RetryConfig {
   ExponentialBackoffRetryConfig({
     required super.maxRetries,
@@ -36,6 +41,6 @@ final class ExponentialBackoffRetryConfig extends RetryConfig {
   }
 
   @override
-  JsonSerializer<ExponentialBackoffRetryConfig> serializer =
+  JsonSerializer<ExponentialBackoffRetryConfig> get serializer =>
       exponentialBackoffRetryConfigSerializer;
 }

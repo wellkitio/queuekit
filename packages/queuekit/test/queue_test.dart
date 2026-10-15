@@ -48,6 +48,68 @@ void main() {
     );
   });
 
+  group('Given a started Queue with a results listener', () {
+    late Queue queue;
+    late List<Object> received;
+
+    setUp(() {
+      queue = startedQueue();
+      received = [];
+      queue.results.listen(received.add, onError: received.add);
+    });
+
+    test('When an event succeeds and another fails then both are delivered', () async {
+      queue.add(EventA());
+      queue.add(FailingEventOnFirstTry());
+      await Future.delayed(processingTime);
+
+      expect(received, [
+        isA<QueueListenerResult>().having((r) => r.result, 'result', 'EventA'),
+        isA<EventFailedException>(),
+      ]);
+    });
+  });
+
+  group('Given a started Queue', () {
+    late Queue queue;
+
+    setUp(() {
+      queue = startedQueue();
+    });
+
+    test('Then its current queue cannot be modified from outside', () {
+      expect(() => queue.currentQueue.add(EventA()), throwsUnsupportedError);
+    });
+
+    test('Then its retry queue cannot be modified from outside', () {
+      expect(() => queue.retryQueue.remove('id'), throwsUnsupportedError);
+    });
+
+    test('When waiting for an event that fails once then it completes with the retried '
+        'result', () async {
+      final event = FailingEventOnFirstTry();
+      queue.add(event);
+
+      await expectLater(queue.waitFor<FailingEventOnFirstTry, Object?>(event), completion(isNull));
+      expect(event.retryConfig?.retryCount, equals(1));
+    });
+  });
+
+  group('Given a started Queue with a running event', () {
+    late Queue queue;
+
+    setUp(() {
+      queue = startedQueue();
+      queue.add(SlowEvent(const Duration(milliseconds: 10)));
+    });
+
+    test('When disposed then no error is thrown once the event completes', () async {
+      queue.dispose();
+
+      await expectLater(Future.delayed(const Duration(milliseconds: 20)), completes);
+    });
+  });
+
   group('Given a started Queue with a listenAll listener', () {
     late Queue queue;
     late List<QueueListenerResult> results;
@@ -159,8 +221,5 @@ void main() {
     });
   });
 }
-
-/// Long enough for a started queue to process its events.
-const processingTime = Duration(milliseconds: 10);
 
 Queue startedQueue() => Queue(QueueStartListenable()..start());

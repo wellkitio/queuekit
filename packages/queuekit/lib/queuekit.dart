@@ -1,7 +1,9 @@
-/// QueueKit is a queuing library for Dart and Flutter, which supports both synchronous and asynchronous operations as well as persistent queues.
+/// A persistent task queue for Dart and Flutter. Runs events in order, retries failures, keeps
+/// dependent events in order and restores the queue across app restarts.
 library;
 
 export 'package:queuekit/src/event.dart';
+export 'package:queuekit/src/event_serializer.dart';
 export 'package:queuekit/src/exceptions.dart';
 export 'package:queuekit/src/hydrated_queue.dart';
 export 'package:queuekit/src/json_serializer.dart';

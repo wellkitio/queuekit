@@ -34,6 +34,8 @@ void main() {
       );
     });
 
+    tearDown(() => queue.dispose());
+
     test('Then the current queue is empty', () {
       expect(queue.currentQueue, isEmpty);
     });
@@ -80,6 +82,8 @@ void main() {
       );
     });
 
+    tearDown(() => queue.dispose());
+
     test('Then the current queue is empty', () {
       expect(queue.currentQueue, isEmpty);
     });
@@ -108,20 +112,18 @@ void main() {
         expect(queue.retryQueue, hasLength(1));
       });
 
-      test('Then the current queue is saved after every change', () {
+      test('Then the current queue is saved after every change, with the three synchronous '
+          'additions saved together', () {
         expect(savedCurrentQueueTypes, [
-          ['EventA'],
-          ['EventA', 'EventB'],
           ['EventA', 'EventB', 'FailingEventOnFirstTry'],
           ['EventB', 'FailingEventOnFirstTry'],
-          ['FailingEventOnFirstTry'],
           ['FailingEventOnFirstTry'],
           <Object?>[],
         ]);
       });
 
       test('Then the retry queue is saved after every change', () {
-        expect(savedRetryQueues.map((retryQueue) => retryQueue.length), [0, 0, 0, 0, 0, 1, 1]);
+        expect(savedRetryQueues.map((retryQueue) => retryQueue.length), [0, 0, 0, 1]);
       });
     });
 
@@ -146,10 +148,248 @@ void main() {
       });
     });
   });
+  group('Given a started HydratedQueue that records its saves', () {
+    late HydratedQueue queue;
+    late List<List<Map<String, dynamic>>> savedCurrentQueues;
+    late List<Map<String, dynamic>> savedRetryQueues;
+
+    setUp(() {
+      savedCurrentQueues = [];
+      savedRetryQueues = [];
+      queue = HydratedQueue(
+        QueueStartListenable()..start(),
+        eventSerializers: eventSerializers,
+        hydrateCurrentQueue: () => null,
+        hydrateRetryQueue: () => null,
+        saveCurrentQueue: (data) {
+          savedCurrentQueues.add((jsonDecode(data) as List).cast<Map<String, dynamic>>());
+        },
+        saveRetryQueue: (data) {
+          savedRetryQueues.add(jsonDecode(data) as Map<String, dynamic>);
+        },
+      );
+    });
+
+    tearDown(() => queue.dispose());
+
+    group('When a dependent event is added behind an event that fails once', () {
+      setUp(() async {
+        final b = ScriptedEvent('b', failures: 1, retryConfig: shortRetryConfig());
+        queue.add(b);
+        queue.add(ScriptedEvent('c'), dependsOn: [b]);
+        await Future.delayed(const Duration(milliseconds: 10));
+      });
+
+      test('Then the dependency is saved with the current queue', () {
+        final saved = savedCurrentQueues.first;
+        expect(saved.map((event) => event['id']), ['b', 'c']);
+        expect(saved[0], isNot(contains('dependsOn')));
+        expect(saved[1]['dependsOn'], ['b']);
+      });
+
+      test('Then the dependency is saved with the retry queue once both are waiting there', () {
+        final saved = savedRetryQueues.last;
+        expect(saved.keys, ['b', 'c']);
+        expect(saved['b'], isNot(contains('dependsOn')));
+        expect((saved['c'] as Map<String, dynamic>)['dependsOn'], ['b']);
+      });
+
+      test('Then only the dependency is saved as awaiting its own retry', () {
+        final saved = savedRetryQueues.last;
+        expect((saved['b'] as Map<String, dynamic>)['awaitingRetry'], isTrue);
+        expect((saved['c'] as Map<String, dynamic>)['awaitingRetry'], isFalse);
+      });
+    });
+  });
+
+  group('Given a HydratedQueue with a persisted dependent event in the current queue', () {
+    late HydratedQueue queue;
+
+    setUp(() {
+      queue = HydratedQueue(
+        QueueStartListenable(),
+        eventSerializers: eventSerializers,
+        hydrateCurrentQueue: () {
+          return jsonEncode([
+            {'type': 'ScriptedEvent', 'name': 'b', 'failures': 1, 'retry': true},
+            {
+              'type': 'ScriptedEvent',
+              'name': 'c',
+              'dependsOn': ['b'],
+            },
+          ]);
+        },
+        hydrateRetryQueue: () => null,
+        saveCurrentQueue: (data) {},
+        saveRetryQueue: (data) {},
+      );
+    });
+
+    tearDown(() => queue.dispose());
+
+    group('When hydrated and started and the dependency fails', () {
+      setUp(() async {
+        await queue.hydrate();
+        queue.startListenable.start();
+        await Future.delayed(const Duration(milliseconds: 10));
+      });
+
+      test('Then the dependent waits in the retry queue behind the dependency', () {
+        expect(queue.currentQueue, isEmpty);
+        expect(queue.retryQueue.keys, ['b', 'c']);
+      });
+    });
+  });
+
+  group(
+    'Given a HydratedQueue with a persisted retry queue holding a dependency and its dependent',
+    () {
+      late HydratedQueue queue;
+      late DateTime nextExecutionTime;
+
+      setUp(() {
+        queue = HydratedQueue(
+          QueueStartListenable(),
+          eventSerializers: eventSerializers,
+          hydrateCurrentQueue: () => null,
+          hydrateRetryQueue: () {
+            return jsonEncode({
+              'b': {
+                'type': 'ScriptedEvent',
+                'event': {'name': 'b', 'retry': true},
+                'nextExecutionTime': nextExecutionTime.toIso8601String(),
+              },
+              'c': {
+                'type': 'ScriptedEvent',
+                'event': {'name': 'c'},
+                'nextExecutionTime': nextExecutionTime.toIso8601String(),
+                'dependsOn': ['b'],
+              },
+            });
+          },
+          saveCurrentQueue: (data) {},
+          saveRetryQueue: (data) {},
+        );
+      });
+
+      tearDown(() => queue.dispose());
+
+      group('When hydrated after the retry was due', () {
+        setUp(() async {
+          nextExecutionTime = DateTime.now().subtract(const Duration(seconds: 1));
+          await queue.hydrate();
+        });
+
+        test('Then both are placed in the current queue in order', () {
+          expect(queue.currentQueue.map((event) => event.id), ['b', 'c']);
+          expect(queue.retryQueue, isEmpty);
+        });
+      });
+
+      group('When hydrated before the retry is due', () {
+        setUp(() async {
+          nextExecutionTime = DateTime.now().add(const Duration(milliseconds: 50));
+          await queue.hydrate();
+        });
+
+        test('Then both wait in the retry queue in order', () {
+          expect(queue.currentQueue, isEmpty);
+          expect(queue.retryQueue.keys, ['b', 'c']);
+        });
+
+        group('and the retry has become due', () {
+          setUp(() async {
+            await Future.delayed(const Duration(milliseconds: 100));
+          });
+
+          test('Then both are re-queued in order, once', () {
+            expect(queue.currentQueue.map((event) => event.id), ['b', 'c']);
+            expect(queue.retryQueue, isEmpty);
+          });
+        });
+      });
+    },
+  );
+
+  group('Given a HydratedQueue with a serializer for one event type', () {
+    late HydratedQueue queue;
+
+    setUp(() {
+      queue = HydratedQueue(
+        QueueStartListenable(),
+        eventSerializers: [eventSerializers.first],
+        hydrateCurrentQueue: () => null,
+        hydrateRetryQueue: () => null,
+        saveCurrentQueue: (data) {},
+        saveRetryQueue: (data) {},
+      );
+    });
+
+    tearDown(() => queue.dispose());
+
+    test('When an event of another type is added then it throws an ArgumentError', () {
+      expect(() => queue.add(EventB()), throwsArgumentError);
+      expect(queue.pendingEvents, isEmpty);
+    });
+
+    test('When an event of another class reports the registered type then it throws an '
+        'ArgumentError', () {
+      expect(() => queue.add(ImpostorEvent()), throwsArgumentError);
+      expect(queue.pendingEvents, isEmpty);
+    });
+  });
+
+  group('Given two serializers with the same type', () {
+    test('When a HydratedQueue is created with them then it throws an ArgumentError', () {
+      expect(
+        () => HydratedQueue(
+          QueueStartListenable(),
+          eventSerializers: [eventSerializers.first, eventSerializers.first],
+          hydrateCurrentQueue: () => null,
+          hydrateRetryQueue: () => null,
+          saveCurrentQueue: (data) {},
+          saveRetryQueue: (data) {},
+        ),
+        throwsArgumentError,
+      );
+    });
+  });
 }
 
-final EventSerializers eventSerializers = {
-  'EventA': (fromJson: (json) => EventA(), toJson: (event) => {}),
-  'EventB': (fromJson: (json) => EventB(), toJson: (event) => {}),
-  'FailingEventOnFirstTry': (fromJson: (json) => FailingEventOnFirstTry(), toJson: (event) => {}),
-};
+/// Reports the type of [EventA] without being one.
+class ImpostorEvent extends Event<Object?> {
+  @override
+  String get id => 'impostor';
+
+  @override
+  String get type => 'EventA';
+
+  @override
+  RetryConfig? get retryConfig => null;
+
+  @override
+  Future<Object?> run() async => null;
+}
+
+final eventSerializers = [
+  EventSerializer<EventA>(type: 'EventA', fromJson: (json) => EventA(), toJson: (event) => {}),
+  EventSerializer<EventB>(type: 'EventB', fromJson: (json) => EventB(), toJson: (event) => {}),
+  EventSerializer<FailingEventOnFirstTry>(
+    type: 'FailingEventOnFirstTry',
+    fromJson: (json) => FailingEventOnFirstTry(),
+    toJson: (event) => {},
+  ),
+  EventSerializer<ScriptedEvent>(
+    type: 'ScriptedEvent',
+    fromJson: (json) => ScriptedEvent(
+      json['name'] as String,
+      failures: json['failures'] as int? ?? 0,
+      retryConfig: json['retry'] == true ? shortRetryConfig() : null,
+    ),
+    toJson: (event) => {
+      'name': event.id,
+      'failures': event.failures,
+      if (event.retryConfig != null) 'retry': true,
+    },
+  ),
+];

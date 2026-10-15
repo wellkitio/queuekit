@@ -1,35 +1,45 @@
 import 'package:queuekit/queuekit.dart';
 
-/// [RetryConfig] is an abstract class that provides the configuration for retrying a task.
+/// Decides when a failed event is retried.
+///
+/// Extend it and implement [minimumDurationForRetry] and [serializer]. See [LinearRetryConfig]
+/// and [ExponentialBackoffRetryConfig] for the built-in strategies.
 abstract base class RetryConfig {
   RetryConfig({required this.maxRetries});
 
-  /// [maxRetries] is the maximum number of retries that will be attempted.
-  /// If it's less than 0, it will retry indefinitely, and [retryCount] will never be incremented.
+  /// The number of retries after the first attempt. A negative value retries forever.
   int maxRetries;
 
-  /// [retryCount] is the number of retries that have been attempted. It starts at 0.
+  /// The number of retries that have been attempted so far, starting at 0.
+  ///
+  /// Stays at 0 when [maxRetries] is negative, so that it can never overflow. Serializers
+  /// persist it, so a restored event continues where it left off.
   int retryCount = 0;
 
-  /// [minimumDurationForRetry] is the duration to wait before the next retry.
-  /// Since the event will be added to the back of the queue, it's not guaranteed that
-  /// the event will be executed immediately after the duration has passed.
+  /// The duration to wait before retry number [retryCount].
+  ///
+  /// Since the event is added to the back of the queue, it's not guaranteed that the event will
+  /// be executed immediately after the duration has passed.
   Duration minimumDurationForRetry(int retryCount);
 
-  /// [minimumDurationForCurrentRetry] is the duration to wait before the next retry based on the current [retryCount].
-  /// Since the event will be added to the back of the queue, it's not guaranteed that
-  /// the event will be executed immediately after the duration has passed.
+  /// The duration to wait before the next retry, based on the current [retryCount].
   Duration minimumDurationForCurrentRetry() => minimumDurationForRetry(retryCount);
 
-  /// [retry]  will increment [retryCount] if [maxRetries] is greater than 0 and it's not exceeded.
-  /// If [maxRetries] is exceeded, it will throw a [RetryExceededException].
+  /// Whether a retry is still available.
+  bool get canRetry => maxRetries < 0 || retryCount < maxRetries;
+
+  /// Increments [retryCount], unless [maxRetries] is negative.
+  ///
+  /// Throws a [RetryExceededException] if no retries are left.
   void retry() {
     if (maxRetries < 0) return;
-    if (retryCount >= maxRetries) {
-      throw RetryExceededException(maxRetries: maxRetries);
-    }
+    if (retryCount >= maxRetries) throw RetryExceededException(maxRetries: maxRetries);
     retryCount++;
   }
 
+  /// Converts this config to and from JSON, including [retryCount].
+  ///
+  /// A [HydratedQueue] relies on it to persist the config with its event; call it from the
+  /// event's own serializer. If the config is never persisted it may throw.
   JsonSerializer<RetryConfig> get serializer;
 }
