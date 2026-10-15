@@ -96,7 +96,9 @@ abstract class Event<T extends Object?> {
   retry queue, dependencies and `findEvent` are all keyed by it. Generate one per instance, for
   example with [`package:uuid`](https://pub.dev/packages/uuid), and persist it with the event if you
   use a `HydratedQueue`.
-- `type` names the kind of event. `HydratedQueue` uses it to pick the serializer for the event.
+- `type` names the kind of event. `HydratedQueue` uses it to pick the event's `EventSerializer`
+  and writes it into the saved data, so it must stay stable across builds: a hand-written
+  constant, never `runtimeType.toString()`, which obfuscated release builds change.
 - `retryConfig` decides what happens when `run` throws. Return `null` to never retry.
 - `run` does the work. Throwing fails the event; the returned value is the event's result.
 
@@ -309,21 +311,58 @@ queue.listenWhere<SharePhoto, Object?>(
 `HydratedQueue` is a `Queue` that saves itself every time it changes and can restore itself on the
 next launch. You provide the storage; it can be anything that stores a string.
 
+Each event class declares its `type` and an `EventSerializer` from the same constant, so the name
+is written once and `toJson` receives the event already typed:
+
+```dart
+class UploadPhoto extends Event<String> {
+  UploadPhoto(this.photoId, {String? id})
+    : id = id ?? '${DateTime.now().microsecondsSinceEpoch}-${_created++}';
+
+  static int _created = 0;
+
+  static const typeName = 'UploadPhoto';
+
+  static final serializer = EventSerializer<UploadPhoto>(
+    type: typeName,
+    fromJson: (json) => UploadPhoto(json['photoId'] as String, id: json['id'] as String)
+      ..retryConfig = linearRetryConfigSerializer.fromJson(
+        json['retryConfig'] as Map<String, dynamic>,
+      ),
+    toJson: (event) => {
+      'photoId': event.photoId,
+      'id': event.id,
+      'retryConfig': linearRetryConfigSerializer.toJson(event.retryConfig!),
+    },
+  );
+
+  final String photoId;
+
+  @override
+  final String id;
+
+  @override
+  String get type => typeName;
+
+  @override
+  LinearRetryConfig? retryConfig = LinearRetryConfig(
+    maxRetries: 3,
+    delay: const Duration(seconds: 2),
+  );
+
+  @override
+  Future<String> run() async => /* upload and return the remote URL */ '';
+}
+```
+
+Register the serializers and hook the queue up to your storage:
+
 ```dart
 final prefs = await SharedPreferences.getInstance();
 
 final queue = HydratedQueue(
   startListenable,
-  eventSerializers: {
-    'UploadPhoto': (
-      fromJson: (json) => UploadPhoto.fromJson(json),
-      toJson: (event) => (event as UploadPhoto).toJson(),
-    ),
-    'SharePhoto': (
-      fromJson: (json) => SharePhoto.fromJson(json),
-      toJson: (event) => (event as SharePhoto).toJson(),
-    ),
-  },
+  eventSerializers: [UploadPhoto.serializer, SharePhoto.serializer],
   saveCurrentQueue: (data) => prefs.setString('currentQueue', data),
   hydrateCurrentQueue: () => prefs.getString('currentQueue'),
   saveRetryQueue: (data) => prefs.setString('retryQueue', data),
@@ -334,12 +373,14 @@ await queue.hydrate(); // Restore first...
 startListenable.start(); // ...then start.
 ```
 
-- `eventSerializers` maps each event `type` to a `fromJson`/`toJson` pair. Events whose type has no
-  serializer are not persisted.
+- Adding an event whose `type` has no serializer, or whose serializer is for another class,
+  throws an `ArgumentError` right away rather than silently not persisting it. Two serializers
+  with the same `type` are rejected when the queue is created.
 - `toJson` must include everything needed to rebuild the event, **including its `id` and retry
   configuration**. The built-in retry configs ship with serializers
   (`linearRetryConfigSerializer`, `exponentialBackoffRetryConfigSerializer`); custom ones expose
   theirs through `RetryConfig.serializer`.
+- Saved events whose `type` has no serializer any more are dropped by `hydrate`.
 - The save callbacks may be synchronous or asynchronous. The hydrate callbacks return the last
   saved string, or `null` when nothing was saved yet.
 - `hydrate` restores the current queue, then the retry queue. Retries whose time has already come
@@ -400,8 +441,8 @@ and clears the queue. Adding to or listening to the queue afterwards throws a `S
 | `RetryConfig` | Base class for retry strategies: `maxRetries`, `retryCount`, `canRetry`, `retry`, `minimumDurationForRetry`, `minimumDurationForCurrentRetry`, `serializer`. |
 | `LinearRetryConfig` | Retries after `delay × retryCount`. |
 | `ExponentialBackoffRetryConfig` | Retries after `delay × multiplier ^ retryCount`. |
+| `EventSerializer<T>` | Converts the events of one `type` to and from JSON for a `HydratedQueue`. |
 | `JsonSerializer<T>` | A `fromJson`/`toJson` pair, used for retry configs. |
-| `EventSerializers` | The map of event type to serializer pair that `HydratedQueue` takes. |
 | `QueueListenerResult<T, U>` | The `(event, result)` record emitted for each successful run. |
 | `EventFailedException` | Emitted on `results` when an event fails; carries the `event`, `error`, `stackTrace` and `willRetry`. |
 | `DependencyFailedException` | The `error` of a dependent that could not run because its `dependency` failed. |

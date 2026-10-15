@@ -298,21 +298,19 @@ class AlwaysFailingEvent extends Event<void> {
   Future<void> run() => Future<void>.error(Exception('$id failed'));
 }
 
-final EventSerializers alwaysFailingSerializers = {
-  'AlwaysFailingEvent': (
+final alwaysFailingSerializers = [
+  EventSerializer<AlwaysFailingEvent>(
+    type: 'AlwaysFailingEvent',
     fromJson: (json) => AlwaysFailingEvent(
       json['id'] as String,
       retryConfig: json['retryConfig'] == null
           ? null
           : linearRetryConfigSerializer.fromJson(json['retryConfig'] as Map<String, dynamic>),
     ),
-    toJson: (event) {
-      event as AlwaysFailingEvent;
-      return {
-        'id': event.id,
-        if (event.retryConfig case final config?)
-          'retryConfig': linearRetryConfigSerializer.toJson(config),
-      };
+    toJson: (event) => {
+      'id': event.id,
+      if (event.retryConfig case final config?)
+        'retryConfig': linearRetryConfigSerializer.toJson(config),
     },
   ),
-};
+];

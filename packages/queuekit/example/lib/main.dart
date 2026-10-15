@@ -8,29 +8,35 @@ final startListenable = QueueStartListenable();
 
 late final HydratedQueue queue;
 
-final exampleEventSerializer = JsonSerializer(
-  fromJson: (json) {
-    return ExampleEvent(id: json['id'] as String)
-      ..retryConfig = linearRetryConfigSerializer.fromJson(
-        json['retryConfig'] as Map<String, dynamic>,
-      );
-  },
-  toJson: (event) {
-    return {'id': event.id, 'retryConfig': linearRetryConfigSerializer.toJson(event.retryConfig!)};
-  },
-);
-
 class ExampleEvent extends Event<String> {
   ExampleEvent({String? id}) : id = id ?? '${DateTime.now().microsecondsSinceEpoch}-${_created++}';
 
   static int _created = 0;
+
+  static const typeName = 'ExampleEvent';
+
+  static final serializer = EventSerializer<ExampleEvent>(
+    type: typeName,
+    fromJson: (json) {
+      return ExampleEvent(id: json['id'] as String)
+        ..retryConfig = linearRetryConfigSerializer.fromJson(
+          json['retryConfig'] as Map<String, dynamic>,
+        );
+    },
+    toJson: (event) {
+      return {
+        'id': event.id,
+        'retryConfig': linearRetryConfigSerializer.toJson(event.retryConfig!),
+      };
+    },
+  );
 
   // Ids must be unique among pending events, including the ones restored from storage.
   @override
   final String id;
 
   @override
-  String get type => 'ExampleEvent';
+  String get type => typeName;
 
   @override
   LinearRetryConfig? retryConfig = LinearRetryConfig(
@@ -50,12 +56,7 @@ Future<void> main() async {
   final prefs = await SharedPreferences.getInstance();
   queue = HydratedQueue(
     startListenable,
-    eventSerializers: {
-      'ExampleEvent': (
-        fromJson: exampleEventSerializer.fromJson,
-        toJson: (event) => exampleEventSerializer.toJson(event as ExampleEvent),
-      ),
-    },
+    eventSerializers: [ExampleEvent.serializer],
     saveCurrentQueue: (data) async {
       await prefs.setString('currentQueue', data);
     },

@@ -310,25 +310,86 @@ void main() {
       });
     },
   );
+
+  group('Given a HydratedQueue with a serializer for one event type', () {
+    late HydratedQueue queue;
+
+    setUp(() {
+      queue = HydratedQueue(
+        QueueStartListenable(),
+        eventSerializers: [eventSerializers.first],
+        hydrateCurrentQueue: () => null,
+        hydrateRetryQueue: () => null,
+        saveCurrentQueue: (data) {},
+        saveRetryQueue: (data) {},
+      );
+    });
+
+    tearDown(() => queue.dispose());
+
+    test('When an event of another type is added then it throws an ArgumentError', () {
+      expect(() => queue.add(EventB()), throwsArgumentError);
+      expect(queue.pendingEvents, isEmpty);
+    });
+
+    test('When an event of another class reports the registered type then it throws an '
+        'ArgumentError', () {
+      expect(() => queue.add(ImpostorEvent()), throwsArgumentError);
+      expect(queue.pendingEvents, isEmpty);
+    });
+  });
+
+  group('Given two serializers with the same type', () {
+    test('When a HydratedQueue is created with them then it throws an ArgumentError', () {
+      expect(
+        () => HydratedQueue(
+          QueueStartListenable(),
+          eventSerializers: [eventSerializers.first, eventSerializers.first],
+          hydrateCurrentQueue: () => null,
+          hydrateRetryQueue: () => null,
+          saveCurrentQueue: (data) {},
+          saveRetryQueue: (data) {},
+        ),
+        throwsArgumentError,
+      );
+    });
+  });
 }
 
-final EventSerializers eventSerializers = {
-  'EventA': (fromJson: (json) => EventA(), toJson: (event) => {}),
-  'EventB': (fromJson: (json) => EventB(), toJson: (event) => {}),
-  'FailingEventOnFirstTry': (fromJson: (json) => FailingEventOnFirstTry(), toJson: (event) => {}),
-  'ScriptedEvent': (
+/// Reports the type of [EventA] without being one.
+class ImpostorEvent extends Event<Object?> {
+  @override
+  String get id => 'impostor';
+
+  @override
+  String get type => 'EventA';
+
+  @override
+  RetryConfig? get retryConfig => null;
+
+  @override
+  Future<Object?> run() async => null;
+}
+
+final eventSerializers = [
+  EventSerializer<EventA>(type: 'EventA', fromJson: (json) => EventA(), toJson: (event) => {}),
+  EventSerializer<EventB>(type: 'EventB', fromJson: (json) => EventB(), toJson: (event) => {}),
+  EventSerializer<FailingEventOnFirstTry>(
+    type: 'FailingEventOnFirstTry',
+    fromJson: (json) => FailingEventOnFirstTry(),
+    toJson: (event) => {},
+  ),
+  EventSerializer<ScriptedEvent>(
+    type: 'ScriptedEvent',
     fromJson: (json) => ScriptedEvent(
       json['name'] as String,
       failures: json['failures'] as int? ?? 0,
       retryConfig: json['retry'] == true ? shortRetryConfig() : null,
     ),
-    toJson: (event) {
-      event as ScriptedEvent;
-      return {
-        'name': event.id,
-        'failures': event.failures,
-        if (event.retryConfig != null) 'retry': true,
-      };
+    toJson: (event) => {
+      'name': event.id,
+      'failures': event.failures,
+      if (event.retryConfig != null) 'retry': true,
     },
   ),
-};
+];

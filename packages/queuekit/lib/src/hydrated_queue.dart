@@ -1,20 +1,8 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:queuekit/queuekit.dart';
-
-/// The serializers a [HydratedQueue] uses, keyed by [Event.type].
-///
-/// `toJson` must include everything needed to rebuild the event, including its id and retry
-/// config. `fromJson` receives that map back.
-typedef EventSerializers =
-    Map<
-      String,
-      ({
-        Event<Object?> Function(Map<String, dynamic> json) fromJson,
-        Map<String, dynamic> Function(Event<Object?> event) toJson,
-      })
-    >;
 
 /// A [Queue] that saves itself whenever it changes and restores itself with [hydrate].
 ///
@@ -23,17 +11,32 @@ typedef EventSerializers =
 /// [hydrateRetryQueue]. Changes made in the same synchronous run are saved together, and saves
 /// are written one at a time, in order.
 base class HydratedQueue extends Queue {
+  /// Throws an [ArgumentError] if two of the [eventSerializers] have the same type.
   HydratedQueue(
     super.startListenable, {
-    required this.eventSerializers,
+    required Iterable<EventSerializer<Event<Object?>>> eventSerializers,
     required this.saveCurrentQueue,
     required this.saveRetryQueue,
     required this.hydrateCurrentQueue,
     required this.hydrateRetryQueue,
-  });
+  }) {
+    for (final serializer in eventSerializers) {
+      if (_serializers.containsKey(serializer.type)) {
+        throw ArgumentError.value(
+          serializer.type,
+          'eventSerializers',
+          'has more than one serializer',
+        );
+      }
+      _serializers[serializer.type] = serializer;
+    }
+  }
 
-  /// The serializer for each event type. Events of other types are not persisted.
-  final EventSerializers eventSerializers;
+  final _serializers = <String, EventSerializer<Event<Object?>>>{};
+
+  /// The serializers, by [Event.type]. Every event added to the queue must have one.
+  Map<String, EventSerializer<Event<Object?>>> get eventSerializers =>
+      UnmodifiableMapView(_serializers);
 
   /// Stores the serialized current queue. May be synchronous or asynchronous.
   // ignore: avoid_futureor_void
@@ -54,9 +57,12 @@ base class HydratedQueue extends Queue {
 
   /// Adds [event] and completes once the change is saved.
   ///
-  /// The future fails if a save callback throws; later saves are not affected.
+  /// Throws an [ArgumentError] if no serializer is registered for the event's type, or if the
+  /// registered one is for another class. The future fails if a save callback throws; later saves
+  /// are not affected.
   @override
   Future<void> add(Event event, {Iterable<Event> dependsOn = const []}) {
+    _serializerFor(event);
     super.add(event, dependsOn: dependsOn);
     return _save();
   }
@@ -82,7 +88,8 @@ base class HydratedQueue extends Queue {
   /// Restores the events saved by a previous instance.
   ///
   /// Call it once, before starting the queue, so restored events run before new ones. Retries
-  /// whose time has come are placed on the current queue; the others wait for their turn.
+  /// whose time has come are placed on the current queue; the others wait for their turn. Saved
+  /// events whose type has no serializer any more are dropped.
   Future<void> hydrate() async {
     final rawCurrentQueue = await hydrateCurrentQueue();
     if (rawCurrentQueue != null) {
@@ -133,7 +140,26 @@ base class HydratedQueue extends Queue {
   }
 
   Event? _eventFromJson(String? type, Map<String, dynamic> json) {
-    return eventSerializers[type]?.fromJson(json);
+    return _serializers[type]?.fromJson(json);
+  }
+
+  EventSerializer<Event<Object?>> _serializerFor(Event event) {
+    final serializer = _serializers[event.type];
+    if (serializer == null) {
+      throw ArgumentError.value(
+        event,
+        'event',
+        'has type "${event.type}", for which this queue has no EventSerializer',
+      );
+    }
+    if (!serializer.accepts(event)) {
+      throw ArgumentError.value(
+        event,
+        'event',
+        'reports type "${event.type}", whose EventSerializer is for another class',
+      );
+    }
+    return serializer;
   }
 
   void _hydrateDependencies(Event event, Map<String, dynamic> json) {
@@ -163,27 +189,25 @@ base class HydratedQueue extends Queue {
   String _encodeCurrentQueue() {
     return jsonEncode([
       for (final event in currentQueue)
-        if (eventSerializers[event.type] case final serializer?)
-          {
-            ...serializer.toJson(event),
-            'id': event.id,
-            'type': event.type,
-            ..._dependsOnJson(event),
-          },
+        {
+          ..._serializerFor(event).toJson(event),
+          'id': event.id,
+          'type': event.type,
+          ..._dependsOnJson(event),
+        },
     ]);
   }
 
   String _encodeRetryQueue() {
     return jsonEncode({
       for (final MapEntry(key: id, value: (:event, :nextExecutionTime)) in retryQueue.entries)
-        if (eventSerializers[event.type] case final serializer?)
-          id: {
-            'type': event.type,
-            'event': serializer.toJson(event),
-            'nextExecutionTime': nextExecutionTime.toIso8601String(),
-            'awaitingRetry': isAwaitingRetry(event),
-            ..._dependsOnJson(event),
-          },
+        id: {
+          'type': event.type,
+          'event': _serializerFor(event).toJson(event),
+          'nextExecutionTime': nextExecutionTime.toIso8601String(),
+          'awaitingRetry': isAwaitingRetry(event),
+          ..._dependsOnJson(event),
+        },
     });
   }
 
