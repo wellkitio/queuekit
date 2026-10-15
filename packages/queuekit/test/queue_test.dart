@@ -48,6 +48,21 @@ void main() {
     );
   });
 
+  group('Given a started Queue with a running event', () {
+    late Queue queue;
+
+    setUp(() {
+      queue = startedQueue();
+      queue.add(SlowEvent(const Duration(milliseconds: 10)));
+    });
+
+    test('When disposed then no error is thrown once the event completes', () async {
+      queue.dispose();
+
+      await expectLater(Future.delayed(const Duration(milliseconds: 20)), completes);
+    });
+  });
+
   group('Given a started Queue with a listenAll listener', () {
     late Queue queue;
     late List<QueueListenerResult> results;

@@ -94,3 +94,22 @@ LinearRetryConfig shortRetryConfig({int maxRetries = 10}) =>
     LinearRetryConfig(maxRetries: maxRetries, delay: failingEventRetryDelay);
 
 const failingEventRetryDelay = Duration(milliseconds: 50);
+
+/// An event that takes [duration] to run.
+class SlowEvent extends Event<void> {
+  SlowEvent(this.duration);
+
+  final Duration duration;
+
+  @override
+  String get id => 'slow';
+
+  @override
+  String get type => 'SlowEvent';
+
+  @override
+  RetryConfig? get retryConfig => null;
+
+  @override
+  Future<void> run() => Future.delayed(duration);
+}
