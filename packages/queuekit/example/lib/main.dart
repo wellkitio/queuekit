@@ -10,19 +10,22 @@ late final HydratedQueue queue;
 
 final exampleEventSerializer = JsonSerializer(
   fromJson: (json) {
-    return ExampleEvent()
+    return ExampleEvent(id: json['id'] as String)
       ..retryConfig = linearRetryConfigSerializer.fromJson(
         json['retryConfig'] as Map<String, dynamic>,
       );
   },
   toJson: (event) {
-    return {'retryConfig': linearRetryConfigSerializer.toJson(event.retryConfig!)};
+    return {'id': event.id, 'retryConfig': linearRetryConfigSerializer.toJson(event.retryConfig!)};
   },
 );
 
 class ExampleEvent extends Event<String> {
+  ExampleEvent({String? id}) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
+
+  // Ids must be unique among pending events.
   @override
-  String get id => 'id';
+  final String id;
 
   @override
   String get type => 'ExampleEvent';
