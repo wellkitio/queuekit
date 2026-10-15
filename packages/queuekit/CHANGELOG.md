@@ -1,4 +1,13 @@
-## 1.0.0 (unreleased)
+## 1.1.0
+
+ - **FEAT**: dependent events. `Queue.add` takes `dependsOn`, a list of pending events that must complete first. If a dependency is retried, its dependents move to the retry queue with it and are re-queued behind it in their original order. If a dependency fails permanently, its dependents fail with a `DependencyFailedException` without running. `HydratedQueue` persists dependencies.
+ - **FEAT**: query pending events with `Queue.pendingEvents`, `Queue.findEvent` and `Queue.findEvents`.
+ - **FIX**: `listenWhere` only passes errors for events of the listened type to `onError`, instead of throwing a `TypeError` for other events.
+ - **FIX**: resuming a queue while an event is running no longer starts a second processing loop.
+ - **FIX**: disposing a queue while an event is running no longer throws once the event completes.
+ - **DOCS**: document every feature in the README.
+
+## 1.0.0
 
 > Note: This release has breaking changes.
 
