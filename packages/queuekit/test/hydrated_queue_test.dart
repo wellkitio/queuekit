@@ -34,6 +34,8 @@ void main() {
       );
     });
 
+    tearDown(() => queue.dispose());
+
     test('Then the current queue is empty', () {
       expect(queue.currentQueue, isEmpty);
     });
@@ -80,6 +82,8 @@ void main() {
       );
     });
 
+    tearDown(() => queue.dispose());
+
     test('Then the current queue is empty', () {
       expect(queue.currentQueue, isEmpty);
     });
@@ -108,20 +112,18 @@ void main() {
         expect(queue.retryQueue, hasLength(1));
       });
 
-      test('Then the current queue is saved after every change', () {
+      test('Then the current queue is saved after every change, with the three synchronous '
+          'additions saved together', () {
         expect(savedCurrentQueueTypes, [
-          ['EventA'],
-          ['EventA', 'EventB'],
           ['EventA', 'EventB', 'FailingEventOnFirstTry'],
           ['EventB', 'FailingEventOnFirstTry'],
-          ['FailingEventOnFirstTry'],
           ['FailingEventOnFirstTry'],
           <Object?>[],
         ]);
       });
 
       test('Then the retry queue is saved after every change', () {
-        expect(savedRetryQueues.map((retryQueue) => retryQueue.length), [0, 0, 0, 0, 0, 1, 1]);
+        expect(savedRetryQueues.map((retryQueue) => retryQueue.length), [0, 0, 0, 1]);
       });
     });
 
@@ -179,7 +181,7 @@ void main() {
       });
 
       test('Then the dependency is saved with the current queue', () {
-        final saved = savedCurrentQueues[1];
+        final saved = savedCurrentQueues.first;
         expect(saved.map((event) => event['id']), ['b', 'c']);
         expect(saved[0], isNot(contains('dependsOn')));
         expect(saved[1]['dependsOn'], ['b']);
@@ -190,6 +192,12 @@ void main() {
         expect(saved.keys, ['b', 'c']);
         expect(saved['b'], isNot(contains('dependsOn')));
         expect((saved['c'] as Map<String, dynamic>)['dependsOn'], ['b']);
+      });
+
+      test('Then only the dependency is saved as awaiting its own retry', () {
+        final saved = savedRetryQueues.last;
+        expect((saved['b'] as Map<String, dynamic>)['awaitingRetry'], isTrue);
+        expect((saved['c'] as Map<String, dynamic>)['awaitingRetry'], isFalse);
       });
     });
   });
@@ -289,11 +297,15 @@ void main() {
           expect(queue.retryQueue.keys, ['b', 'c']);
         });
 
-        test('Then both are re-queued in order, once, when the retry is due', () async {
-          await Future.delayed(const Duration(milliseconds: 100));
+        group('and the retry has become due', () {
+          setUp(() async {
+            await Future.delayed(const Duration(milliseconds: 100));
+          });
 
-          expect(queue.currentQueue.map((event) => event.id), ['b', 'c']);
-          expect(queue.retryQueue, isEmpty);
+          test('Then both are re-queued in order, once', () {
+            expect(queue.currentQueue.map((event) => event.id), ['b', 'c']);
+            expect(queue.retryQueue, isEmpty);
+          });
         });
       });
     },

@@ -7,6 +7,7 @@ A persistent task queue for Dart and Flutter. Queue up work as events, run them 
 order, retry failures, keep dependent events in order, and persist the queue across app restarts.
 
 ```dart
+// UploadPhoto and SharePhoto extend Event<T>; see the package README for the full quick start.
 final startListenable = QueueStartListenable();
 final queue = Queue(startListenable);
 
@@ -45,9 +46,10 @@ dpk run format        # Format every package
 dpk run test          # Test every package
 ```
 
-Scripts are defined in [`dpk.yaml`](dpk.yaml) and run from the repository root. The dpk agent skill
-for AI coding assistants is checked in under [`skills/dpk`](skills/dpk) and installed with
-`npx skills experimental_install`.
+Scripts are defined in [`dpk.yaml`](dpk.yaml) and run from the repository root. Skills for AI
+coding assistants are checked in under [`skills/`](skills) and [`.agents/skills`](.agents/skills);
+`npx skills experimental_install` restores them from [`skills-lock.json`](skills-lock.json). They are
+optional and not needed to build or test.
 
 ### Layout
 

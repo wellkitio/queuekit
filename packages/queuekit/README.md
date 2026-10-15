@@ -14,8 +14,8 @@ it survives an app restart.
 - **Typed results**: listen to the results of all events, of one event type, or wait for a single
   event.
 - **Retries**: linear and exponential backoff out of the box, or bring your own strategy.
-- **Dependent events**: an event can depend on other pending events. If a dependency has to wait for
-  a retry, the dependent waits with it, so their order is preserved.
+- **Dependent events**: an event can depend on other pending events; it runs after them and waits
+  with them through retries, so their order is preserved.
 - **Queries**: look up what is pending by id, type or any predicate.
 - **Persistence**: `HydratedQueue` saves the queue through callbacks you provide and restores it on
   the next launch, including retries in flight and dependencies.
@@ -36,8 +36,11 @@ QueueKit requires Dart 3.11 or later and has no Flutter dependency.
 import 'package:queuekit/queuekit.dart';
 
 class SendMessage extends Event<String> {
-  SendMessage(this.text) : id = DateTime.now().microsecondsSinceEpoch.toString();
+  SendMessage(this.text) : id = 'send-${_created++}';
 
+  static int _created = 0;
+
+  // Ids must be unique among pending events.
   @override
   final String id;
 
@@ -113,8 +116,9 @@ A `Queue` processes events one at a time, in the order they were added, while it
 | `pause()` | Stops processing after the event that is currently running. Events can still be added. |
 | `isStarted` | Whether the queue is currently started. |
 
-A queue starts paused. Add your events, set up your listeners, and then call `start()`. With a
-`HydratedQueue`, call `hydrate()` before `start()` so restored events run before new ones.
+A queue starts paused. Set up your listeners, add your events, then call `start()`; a listener
+added later misses the results that were already emitted. With a `HydratedQueue`, call `hydrate()`
+before `start()` so restored events run before new ones.
 
 `QueueStartListenable` is a [`StateNotifier<bool>`](https://pub.dev/packages/state_notifier), so it
 can be driven by connectivity, authentication state or anything else your app knows about.
@@ -152,20 +156,23 @@ queue.listenWhere<SendMessage, String>((result) {
 final String text = await queue.waitFor<SendMessage, String>(event);
 ```
 
-`waitFor` only works for an event that is added to the queue, before or after the call; for any
-other event the future never completes.
+`waitFor` matches the event by id on the result stream, so call it while the event is still
+pending, or before adding it. If the event has already finished, or is never added, the future
+never completes.
 
 ### Errors
 
 When `run` throws, the queue emits an `EventFailedException` on the stream. It carries the `event`,
-the original `error` and its `stackTrace`. The `onError` callbacks of `listenAll` and `listenWhere`
-receive it unwrapped, together with the event:
+the original `error`, its `stackTrace` and `willRetry`, which tells whether the queue is going to
+retry the event. The `onError` callbacks of `listenAll` and `listenWhere` receive it as a typed
+`EventFailedException`, together with the failed event and the stack trace:
 
 ```dart
 queue.listenWhere<SendMessage, String>(
   (result) {},
   onError: (SendMessage event, EventFailedException exception, StackTrace stackTrace) {
-    print('${event.text} failed with ${exception.error}');
+    final outcome = exception.willRetry ? 'will be retried' : 'gave up';
+    print('${event.text} failed with ${exception.error}, $outcome');
   },
 );
 ```
@@ -190,13 +197,16 @@ ExponentialBackoffRetryConfig(maxRetries: 3, delay: const Duration(seconds: 1), 
 
 - When an event fails and has retries left, it moves to the `retryQueue`. Once the delay has passed
   it is added to the **end** of the queue again, so other events may run in between.
-- `maxRetries` is the number of retries after the first attempt. A negative value retries forever.
+- `maxRetries` is the number of retries after the first attempt. A negative value retries forever;
+  `retryCount` then stays at 0, so the built-in configs wait `minimumDurationForRetry(0)`, which
+  is zero, between attempts. Use a custom `RetryConfig` for unlimited retries with a delay.
 - When an event fails with no retries left it is dropped after its last `EventFailedException`.
 - `retryCount` lives on the config instance, so share a config between events only if you want
   them to share a retry budget. `canRetry` tells whether a retry is left.
 
-To write your own strategy, extend `RetryConfig` and implement `minimumDurationForRetry`. If you use
-a `HydratedQueue`, also provide a `serializer` so the config can be persisted with its event:
+To write your own strategy, extend `RetryConfig` and implement `minimumDurationForRetry` and
+`serializer`. A `HydratedQueue` uses the serializer to persist the config with its event, so
+include `retryCount`; if you never persist events it may simply throw:
 
 ```dart
 final class JitteredRetryConfig extends RetryConfig {
@@ -208,9 +218,10 @@ final class JitteredRetryConfig extends RetryConfig {
   }
 
   @override
-  JsonSerializer<JitteredRetryConfig> serializer = JsonSerializer(
-    fromJson: (json) => JitteredRetryConfig(maxRetries: json['maxRetries'] as int),
-    toJson: (config) => {'maxRetries': config.maxRetries},
+  JsonSerializer<JitteredRetryConfig> get serializer => JsonSerializer(
+    fromJson: (json) => JitteredRetryConfig(maxRetries: json['maxRetries'] as int)
+      ..retryCount = json['retryCount'] as int? ?? 0,
+    toJson: (config) => {'maxRetries': config.maxRetries, 'retryCount': config.retryCount},
   );
 }
 ```
@@ -221,8 +232,8 @@ Sometimes you need to know what is already queued, for example to avoid queueing
 twice or to find an event to depend on.
 
 ```dart
-// Everything that has not finished yet, in the order it will run: the current queue first
-// (including the running event), then the events waiting for a retry or a dependency.
+// Everything that has not finished yet: the current queue in run order (including the running
+// event), followed by the retry queue in the order its events were added to it.
 final Iterable<Event> pending = queue.pendingEvents;
 
 // By id.
@@ -252,8 +263,9 @@ queue.add(SharePhoto(photoId), dependsOn: [upload]);
 The rules:
 
 - A dependent event runs after its dependencies, though not necessarily right after them:
-  independent events may run in between. Since the dependencies are pending when the dependent
-  is added, this is the natural order; dependencies only matter once something goes wrong.
+  independent events may run in between. Dependencies must already be pending when the dependent
+  is added, so they are ahead of it in the queue anyway; the declaration only changes anything
+  when a dependency fails.
 - **If a dependency fails and is going to be retried, every event that depends on it, directly or
   through other dependents, moves to the retry queue with it.** When the dependency is retried they
   are all re-queued in their original order, right behind it. Events that do not depend on it keep
@@ -335,7 +347,9 @@ startListenable.start(); // ...then start.
   Call it once, before `start()`.
 - The built-in retry config serializers include `retryCount`, so a restored event continues its
   retry budget and backoff where it left off. Do the same in a custom `RetryConfig.serializer`.
-- Saves are written one at a time, in the order they happened, even when the storage is slow.
+- Changes made in the same synchronous run are saved together, and saves are written one at a
+  time, in the order they happened, even when the storage is slow. `add` returns a future that
+  completes once the change is saved and fails if a save callback throws.
 
 ### Storage format
 
@@ -351,17 +365,19 @@ The current queue is saved as a JSON array, one object per event, in queue order
 Each object is the event's `toJson` output plus `id`, `type` and, when present, `dependsOn`. The
 whole object is passed back to `fromJson`.
 
-The retry queue is saved as a JSON object keyed by event id, in order:
+The retry queue is saved as a JSON object keyed by event id, in the order the events entered the
+retry queue:
 
 ```json
 {
-  "e1": {"type": "UploadPhoto", "event": {"photoId": "p1", "id": "e1", "retryConfig": {"maxRetries": 3, "delay": 1000, "retryCount": 1}}, "nextExecutionTime": "2026-10-15T10:00:00.000Z"},
-  "e2": {"type": "SharePhoto", "event": {"photoId": "p1", "id": "e2"}, "nextExecutionTime": "2026-10-15T10:00:00.000Z", "dependsOn": ["e1"]}
+  "e1": {"type": "UploadPhoto", "event": {"photoId": "p1", "id": "e1", "retryConfig": {"maxRetries": 3, "delay": 1000, "retryCount": 1}}, "nextExecutionTime": "2026-10-15T10:00:00.000Z", "awaitingRetry": true},
+  "e2": {"type": "SharePhoto", "event": {"photoId": "p1", "id": "e2"}, "nextExecutionTime": "2026-10-15T10:00:00.000Z", "awaitingRetry": false, "dependsOn": ["e1"]}
 }
 ```
 
 Here only the `event` object is passed back to `fromJson`, which is why `toJson` has to include
-the id itself.
+the id itself. `awaitingRetry` distinguishes an event waiting for its own retry from one that is
+only waiting for a dependency.
 
 ## Disposing
 
@@ -370,23 +386,24 @@ queue.dispose();
 ```
 
 `dispose` cancels pending retries, closes the result stream, disposes the `QueueStartListenable`
-and clears the queue. Using the queue afterwards throws a `StateError`.
+and clears the queue. Adding to or listening to the queue afterwards throws a `StateError`. A
+`HydratedQueue` does not save on dispose, so its persisted events are restored on the next launch.
 
 ## API overview
 
 | Type | Purpose |
 | --- | --- |
 | `Event<T>` | A unit of work with an `id`, a `type`, an optional `retryConfig` and a `run` method. |
-| `Queue` | Runs events in order. `add`, `pendingEvents`, `findEvent`, `findEvents`, `results`, `listenAll`, `listenWhere`, `waitFor`, `dispose`. |
+| `Queue` | Runs events in order. `add`, `pendingEvents`, `findEvent`, `findEvents`, `currentQueue`, `retryQueue`, `startListenable`, `results`, `listenAll`, `listenWhere`, `waitFor`, `dispose`. |
 | `HydratedQueue` | A `Queue` that persists itself through callbacks and restores with `hydrate`. |
 | `QueueStartListenable` | Starts and pauses a queue: `start`, `pause`, `isStarted`. |
-| `RetryConfig` | Base class for retry strategies: `maxRetries`, `retryCount`, `canRetry`, `minimumDurationForRetry`, `serializer`. |
+| `RetryConfig` | Base class for retry strategies: `maxRetries`, `retryCount`, `canRetry`, `retry`, `minimumDurationForRetry`, `minimumDurationForCurrentRetry`, `serializer`. |
 | `LinearRetryConfig` | Retries after `delay × retryCount`. |
 | `ExponentialBackoffRetryConfig` | Retries after `delay × multiplier ^ retryCount`. |
 | `JsonSerializer<T>` | A `fromJson`/`toJson` pair, used for retry configs. |
 | `EventSerializers` | The map of event type to serializer pair that `HydratedQueue` takes. |
 | `QueueListenerResult<T, U>` | The `(event, result)` record emitted for each successful run. |
-| `EventFailedException` | Emitted on `results` when an event fails; carries the `event`, `error` and `stackTrace`. |
+| `EventFailedException` | Emitted on `results` when an event fails; carries the `event`, `error`, `stackTrace` and `willRetry`. |
 | `DependencyFailedException` | The `error` of a dependent that could not run because its `dependency` failed. |
 | `RetryExceededException` | Thrown by `RetryConfig.retry` when called with no retries left. |
 

@@ -19,11 +19,29 @@ void main() {
 
       expect(restored.retryCount, equals(2));
     });
+  });
 
-    test('When deserialized from JSON without a retry count then the retry count is zero', () {
+  group('Given LinearRetryConfig JSON without a retry count', () {
+    test('When deserialized then the retry count is zero', () {
       final restored = linearRetryConfigSerializer.fromJson({'maxRetries': 5, 'delay': 1000});
 
       expect(restored.retryCount, equals(0));
+    });
+  });
+
+  group('Given a RetryConfig that retries forever', () {
+    late LinearRetryConfig config;
+
+    setUp(() {
+      config = LinearRetryConfig(maxRetries: -1, delay: const Duration(seconds: 1));
+    });
+
+    test('When retried then the retry count stays at zero, so it can never overflow', () {
+      config.retry();
+      config.retry();
+
+      expect(config.retryCount, equals(0));
+      expect(config.canRetry, isTrue);
     });
   });
 
@@ -43,8 +61,10 @@ void main() {
 
       expect(restored.retryCount, equals(1));
     });
+  });
 
-    test('When deserialized from JSON with an integer multiplier then it is accepted', () {
+  group('Given ExponentialBackoffRetryConfig JSON with an integer multiplier', () {
+    test('When deserialized then the multiplier is accepted', () {
       final restored = exponentialBackoffRetryConfigSerializer.fromJson({
         'maxRetries': 5,
         'delay': 1000,
@@ -63,12 +83,12 @@ void main() {
       errors = [];
       queue = HydratedQueue(
         QueueStartListenable(),
-        eventSerializers: countingSerializers,
+        eventSerializers: alwaysFailingSerializers,
         hydrateCurrentQueue: () => null,
         hydrateRetryQueue: () {
           return jsonEncode({
             'b': {
-              'type': 'CountingEvent',
+              'type': 'AlwaysFailingEvent',
               'event': {
                 'id': 'b',
                 'retryConfig': {'maxRetries': 2, 'delay': 10, 'retryCount': 2},
@@ -112,12 +132,12 @@ void main() {
     setUp(() {
       queue = HydratedQueue(
         QueueStartListenable(),
-        eventSerializers: countingSerializers,
+        eventSerializers: alwaysFailingSerializers,
         hydrateCurrentQueue: () => null,
         hydrateRetryQueue: () {
           return jsonEncode({
             'b': {
-              'type': 'CountingEvent',
+              'type': 'AlwaysFailingEvent',
               'event': {
                 'id': 'b',
                 'retryConfig': {'maxRetries': -1, 'delay': 10, 'retryCount': 0},
@@ -152,7 +172,7 @@ void main() {
       saves = 0;
       queue = HydratedQueue(
         QueueStartListenable(),
-        eventSerializers: countingSerializers,
+        eventSerializers: alwaysFailingSerializers,
         hydrateCurrentQueue: () => null,
         hydrateRetryQueue: () => null,
         saveCurrentQueue: (data) {
@@ -170,10 +190,10 @@ void main() {
 
       setUp(() async {
         firstAddError = null;
-        await queue.add(CountingEvent('a')).catchError((Object error) {
+        await queue.add(AlwaysFailingEvent('a')).catchError((Object error) {
           firstAddError = error;
         });
-        await queue.add(CountingEvent('b'));
+        await queue.add(AlwaysFailingEvent('b'));
       });
 
       test('Then the first add reports the failure', () {
@@ -194,12 +214,12 @@ void main() {
       savedCurrentQueues = [];
       queue = HydratedQueue(
         QueueStartListenable(),
-        eventSerializers: countingSerializers,
+        eventSerializers: alwaysFailingSerializers,
         hydrateCurrentQueue: () {
           return jsonEncode([
             {'type': 'Unknown', 'id': 'b'},
             {
-              'type': 'CountingEvent',
+              'type': 'AlwaysFailingEvent',
               'id': 'c',
               'dependsOn': ['b'],
             },
@@ -215,13 +235,13 @@ void main() {
 
     test('When hydrated then the dangling dependency is dropped', () async {
       await queue.hydrate();
-      await queue.add(CountingEvent('d'));
+      await queue.add(AlwaysFailingEvent('d'));
 
       expect(savedCurrentQueues.last, isNot(contains('dependsOn')));
     });
   });
 
-  group('Given a started HydratedQueue whose storage is slow for the first save', () {
+  group('Given a paused HydratedQueue whose storage is slow for the first save', () {
     late HydratedQueue queue;
     late List<String> savedCurrentQueues;
     late Completer<void> firstSave;
@@ -230,8 +250,8 @@ void main() {
       savedCurrentQueues = [];
       firstSave = Completer<void>();
       queue = HydratedQueue(
-        QueueStartListenable()..start(),
-        eventSerializers: countingSerializers,
+        QueueStartListenable(),
+        eventSerializers: alwaysFailingSerializers,
         hydrateCurrentQueue: () => null,
         hydrateRetryQueue: () => null,
         saveCurrentQueue: (data) async {
@@ -244,24 +264,26 @@ void main() {
 
     tearDown(() => queue.dispose());
 
-    group('When an event is added and processed while the first save is still pending', () {
+    group('When a second event is added while the first save is still pending', () {
       setUp(() async {
-        queue.add(CountingEvent('a'));
+        queue.add(AlwaysFailingEvent('a'));
+        await Future.delayed(const Duration(milliseconds: 10));
+        queue.add(AlwaysFailingEvent('b'));
         await Future.delayed(const Duration(milliseconds: 10));
         firstSave.complete();
         await Future.delayed(const Duration(milliseconds: 10));
       });
 
       test('Then the saves are written in the order they happened', () {
-        expect(savedCurrentQueues.map((data) => (jsonDecode(data) as List).length), [1, 0]);
+        expect(savedCurrentQueues.map((data) => (jsonDecode(data) as List).length), [1, 2]);
       });
     });
   });
 }
 
 /// An event that always fails and whose retry config is persisted.
-class CountingEvent extends Event<void> {
-  CountingEvent(this.id, {this.retryConfig});
+class AlwaysFailingEvent extends Event<void> {
+  AlwaysFailingEvent(this.id, {this.retryConfig});
 
   @override
   final String id;
@@ -270,22 +292,22 @@ class CountingEvent extends Event<void> {
   LinearRetryConfig? retryConfig;
 
   @override
-  String get type => 'CountingEvent';
+  String get type => 'AlwaysFailingEvent';
 
   @override
   Future<void> run() => Future<void>.error(Exception('$id failed'));
 }
 
-final EventSerializers countingSerializers = {
-  'CountingEvent': (
-    fromJson: (json) => CountingEvent(
+final EventSerializers alwaysFailingSerializers = {
+  'AlwaysFailingEvent': (
+    fromJson: (json) => AlwaysFailingEvent(
       json['id'] as String,
       retryConfig: json['retryConfig'] == null
           ? null
           : linearRetryConfigSerializer.fromJson(json['retryConfig'] as Map<String, dynamic>),
     ),
     toJson: (event) {
-      event as CountingEvent;
+      event as AlwaysFailingEvent;
       return {
         'id': event.id,
         if (event.retryConfig case final config?)

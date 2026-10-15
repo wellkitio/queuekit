@@ -1,5 +1,7 @@
 import 'package:queuekit/queuekit.dart';
 
+/// The [JsonSerializer] of [LinearRetryConfig]. Persists `maxRetries`, `delay` in milliseconds
+/// and `retryCount`.
 final linearRetryConfigSerializer = JsonSerializer(
   fromJson: (json) {
     return LinearRetryConfig(

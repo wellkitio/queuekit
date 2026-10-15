@@ -21,9 +21,11 @@ final exampleEventSerializer = JsonSerializer(
 );
 
 class ExampleEvent extends Event<String> {
-  ExampleEvent({String? id}) : id = id ?? DateTime.now().microsecondsSinceEpoch.toString();
+  ExampleEvent({String? id}) : id = id ?? '${DateTime.now().microsecondsSinceEpoch}-${_created++}';
 
-  // Ids must be unique among pending events.
+  static int _created = 0;
+
+  // Ids must be unique among pending events, including the ones restored from storage.
   @override
   final String id;
 

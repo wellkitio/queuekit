@@ -281,9 +281,3 @@ void main() {
     });
   });
 }
-
-/// Long enough for a started queue to process its events.
-const processingTime = Duration(milliseconds: 10);
-
-/// Long enough for a failed event to be retried and processed.
-final retryTime = failingEventRetryDelay + const Duration(milliseconds: 20);

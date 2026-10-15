@@ -2,9 +2,8 @@ import 'package:queuekit/queuekit.dart';
 
 /// Decides when a failed event is retried.
 ///
-/// Extend it and implement [minimumDurationForRetry]. Provide a [serializer] so a [HydratedQueue]
-/// can persist the config with its event. See [LinearRetryConfig] and
-/// [ExponentialBackoffRetryConfig] for the built-in strategies.
+/// Extend it and implement [minimumDurationForRetry] and [serializer]. See [LinearRetryConfig]
+/// and [ExponentialBackoffRetryConfig] for the built-in strategies.
 abstract base class RetryConfig {
   RetryConfig({required this.maxRetries});
 
@@ -13,7 +12,8 @@ abstract base class RetryConfig {
 
   /// The number of retries that have been attempted so far, starting at 0.
   ///
-  /// Serializers persist it, so a restored event continues where it left off.
+  /// Stays at 0 when [maxRetries] is negative, so that it can never overflow. Serializers
+  /// persist it, so a restored event continues where it left off.
   int retryCount = 0;
 
   /// The duration to wait before retry number [retryCount].
@@ -33,12 +33,13 @@ abstract base class RetryConfig {
   /// Throws a [RetryExceededException] if no retries are left.
   void retry() {
     if (maxRetries < 0) return;
-    if (retryCount >= maxRetries) {
-      throw RetryExceededException(maxRetries: maxRetries);
-    }
+    if (retryCount >= maxRetries) throw RetryExceededException(maxRetries: maxRetries);
     retryCount++;
   }
 
   /// Converts this config to and from JSON, including [retryCount].
+  ///
+  /// A [HydratedQueue] relies on it to persist the config with its event; call it from the
+  /// event's own serializer. If the config is never persisted it may throw.
   JsonSerializer<RetryConfig> get serializer;
 }

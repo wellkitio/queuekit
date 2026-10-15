@@ -1,5 +1,7 @@
 import 'package:queuekit/queuekit.dart';
 
+/// The shared events take one event-loop turn to run, like real work would, so that a
+/// [HydratedQueue] saves the queue before they complete.
 class EventA extends Event<Object?> {
   @override
   LinearRetryConfig? retryConfig = LinearRetryConfig(
@@ -9,6 +11,7 @@ class EventA extends Event<Object?> {
 
   @override
   Future<Object?> run() async {
+    await Future.delayed(Duration.zero);
     return 'EventA';
   }
 
@@ -29,6 +32,7 @@ class EventB extends Event<Object?> {
 
   @override
   Future<Object?> run() async {
+    await Future.delayed(Duration.zero);
     return null;
   }
 
@@ -48,6 +52,7 @@ class FailingEventOnFirstTry extends Event<Object?> {
 
   @override
   Future<Object?> run() async {
+    await Future.delayed(Duration.zero);
     if (retryConfig!.retryCount == 0) {
       throw Exception('Failed on first try');
     } else {
@@ -80,6 +85,7 @@ class ScriptedEvent extends Event<String> {
 
   @override
   Future<String> run() async {
+    await Future.delayed(Duration.zero);
     runs++;
     if (runs <= failures) throw Exception('$id failed on run $runs');
     return id;
@@ -94,6 +100,12 @@ LinearRetryConfig shortRetryConfig({int maxRetries = 10}) =>
     LinearRetryConfig(maxRetries: maxRetries, delay: failingEventRetryDelay);
 
 const failingEventRetryDelay = Duration(milliseconds: 50);
+
+/// Long enough for a started queue to process its events.
+const processingTime = Duration(milliseconds: 10);
+
+/// Long enough for an event with [shortRetryConfig] to fail, be retried and be processed.
+final retryTime = failingEventRetryDelay + const Duration(milliseconds: 20);
 
 /// An event that takes [duration] to run.
 class SlowEvent extends Event<void> {

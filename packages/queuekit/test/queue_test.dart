@@ -222,7 +222,4 @@ void main() {
   });
 }
 
-/// Long enough for a started queue to process its events.
-const processingTime = Duration(milliseconds: 10);
-
 Queue startedQueue() => Queue(QueueStartListenable()..start());

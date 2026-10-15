@@ -39,7 +39,8 @@ base class Queue {
   bool _processing = false;
   bool _disposed = false;
 
-  /// The events waiting to run, in order. The first one is the event currently running.
+  /// The events waiting to run, in order. While the queue is processing, the first one is the
+  /// event currently running.
   List<Event> get currentQueue => UnmodifiableListView(_currentQueue);
 
   /// The events waiting for a retry, keyed by event id, together with the events that are waiting
@@ -47,10 +48,10 @@ base class Queue {
   Map<String, ({Event event, DateTime nextExecutionTime})> get retryQueue =>
       UnmodifiableMapView(_retryQueue);
 
-  /// Every event that has not finished yet, in the order it will run: the [currentQueue]
-  /// (including the event currently running) followed by the [retryQueue].
+  /// Every event that has not finished yet: the [currentQueue], in the order it will run and
+  /// including the event currently running, followed by the [retryQueue] in the order its entries
+  /// were added.
   Iterable<Event> get pendingEvents {
-    _checkDisposed();
     return _currentQueue.followedBy(_retryQueue.values.map((entry) => entry.event));
   }
 
@@ -152,9 +153,9 @@ base class Queue {
   /// Completes with the result of [event] once it has run, or with its [EventFailedException]
   /// if it fails permanently.
   ///
-  /// [event] has to be added to this queue, before or after calling [waitFor]; otherwise the
-  /// returned future never completes. A failure that is going to be retried does not complete
-  /// the future.
+  /// Matches the event by id on [results], so call it while [event] is still pending, or before
+  /// adding it. If the event has already finished, or is never added, the returned future never
+  /// completes. A failure that is going to be retried does not complete the future.
   Future<U> waitFor<T extends Event<U>, U extends Object?>(T event) {
     final completer = Completer<U>();
     late StreamSubscription<QueueListenerResult<T, U>> subscription;
@@ -165,8 +166,7 @@ base class Queue {
         completer.complete(result.result);
       },
       onError: (event_, error, stackTrace) {
-        if (event_.id != event.id) return;
-        if (_scheduledRetry(error.event)) return;
+        if (event_.id != event.id || error.willRetry) return;
         subscription.cancel();
         completer.completeError(error, stackTrace);
       },
@@ -174,9 +174,10 @@ base class Queue {
     return completer.future;
   }
 
-  /// Cancels pending retries, closes [results], disposes [startListenable] and clears the queue.
+  /// Cancels pending retries, closes [results], disposes [startListenable] and clears the queue
+  /// without saving, so a [HydratedQueue] restores its events on the next launch.
   ///
-  /// Using the queue afterwards throws a [StateError].
+  /// Adding to or listening to the queue afterwards throws a [StateError].
   void dispose() {
     _checkDisposed();
     startListenable.dispose();
@@ -199,11 +200,11 @@ base class Queue {
     _currentQueue.add(event);
   }
 
-  /// Removes the event at [index] from the [currentQueue].
+  /// Removes [event] from the [currentQueue].
   @protected
-  void removeIndexFromCurrentQueue(int index) {
+  void removeFromCurrentQueue(Event event) {
     _checkDisposed();
-    _currentQueue.removeAt(index);
+    _currentQueue.remove(event);
   }
 
   /// Puts [event] in the [retryQueue] under [id], due at [nextExecutionTime].
@@ -231,6 +232,15 @@ base class Queue {
       releaseUnblockedEvents();
     });
   }
+
+  /// Whether [event] is waiting in the [retryQueue] for its own retry, as opposed to waiting for
+  /// a dependency.
+  @protected
+  bool isAwaitingRetry(Event event) => timers.containsKey(event.id);
+
+  /// Whether one of the events [event] depends on is waiting in the [retryQueue].
+  @protected
+  bool isWaitingForDependency(Event event) => _blockedUntil(event) != null;
 
   /// Moves every event that is waiting in the [retryQueue] only because of its dependencies, and
   /// whose dependencies are no longer waiting there, back to the [currentQueue].
@@ -281,28 +291,28 @@ base class Queue {
         final event = _currentQueue.first;
         final blockedUntil = _blockedUntil(event);
         if (blockedUntil != null) {
-          removeIndexFromCurrentQueue(0);
+          removeFromCurrentQueue(event);
           addToRetryQueue(event.id, event, blockedUntil);
           continue;
         }
         try {
           final result = await event.run();
           if (_disposed) return;
-          dependencies.remove(event.id);
+          _forget(event);
           _controller.add((event: event, result: result));
         } catch (e, s) {
           if (_disposed) return;
-          final retryScheduled = _scheduleRetry(event);
-          _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
-          if (retryScheduled) {
+          final willRetry = _scheduleRetry(event);
+          _controller.addError(
+            EventFailedException(event: event, error: e, stackTrace: s, willRetry: willRetry),
+          );
+          if (willRetry) {
             _parkDependents(event);
           } else {
-            dependencies.remove(event.id);
             _failDependents(event, e, s);
           }
         }
-        final index = _currentQueue.indexOf(event);
-        if (index != -1) removeIndexFromCurrentQueue(index);
+        if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
       }
     } finally {
       _processing = false;
@@ -319,9 +329,6 @@ base class Queue {
     addTimerForRetry(event.id, event, duration);
     return true;
   }
-
-  /// Whether [event] is waiting for a retry of its own.
-  bool _scheduledRetry(Event event) => timers.containsKey(event.id);
 
   /// The time until which [event] has to wait for a dependency in the [retryQueue], or `null`
   /// when none of its dependencies is waiting there.
@@ -341,56 +348,63 @@ base class Queue {
   /// the [retryQueue] so that they run after it again.
   void _parkDependents(Event failed) {
     final until = _retryQueue[failed.id]!.nextExecutionTime;
-    final parked = {failed.id};
-    bool changed;
-    do {
-      changed = false;
-      for (var i = 0; i < _currentQueue.length; i++) {
-        final event = _currentQueue[i];
-        if (parked.contains(event.id) || !_dependsOnAny(event, parked)) continue;
-        parked.add(event.id);
-        removeIndexFromCurrentQueue(i--);
-        addToRetryQueue(event.id, event, until);
-        changed = true;
-      }
-    } while (changed);
+    for (final event in _dependentsOf(failed, _currentQueue)) {
+      removeFromCurrentQueue(event);
+      addToRetryQueue(event.id, event, until);
+    }
   }
 
   /// Fails every pending event that depends on [failed], directly or indirectly, with a
-  /// [DependencyFailedException].
+  /// [DependencyFailedException] naming its direct dependency.
   void _failDependents(Event failed, Object error, StackTrace stackTrace) {
-    final failures = <String, ({Event event, Object error})>{
-      failed.id: (event: failed, error: error),
-    };
+    final errors = <String, Object>{failed.id: error};
+    final failedEvents = <String, Event>{failed.id: failed};
+    for (final event in _dependentsOf(failed, pendingEvents)) {
+      final dependencyId = dependencies[event.id]!.firstWhere(errors.containsKey);
+      final exception = DependencyFailedException(
+        dependency: failedEvents[dependencyId]!,
+        error: errors[dependencyId]!,
+      );
+      errors[event.id] = exception;
+      failedEvents[event.id] = event;
+      _remove(event);
+      _controller.addError(
+        EventFailedException(event: event, error: exception, stackTrace: stackTrace),
+      );
+    }
+    failedEvents.values.forEach(_forget);
+  }
+
+  /// The events among [candidates] that depend on [root], directly or through other dependents,
+  /// in the order of [candidates]. Dependencies come before their dependents.
+  List<Event> _dependentsOf(Event root, Iterable<Event> candidates) {
+    final events = candidates.toList();
+    final dependentIds = {root.id};
+    final dependents = <Event>[];
     bool changed;
     do {
       changed = false;
-      for (final event in pendingEvents.toList()) {
-        if (failures.containsKey(event.id) || !_dependsOnAny(event, failures.keys)) continue;
-        final dependency = failures[dependencies[event.id]!.firstWhere(failures.containsKey)]!;
-        final exception = DependencyFailedException(
-          dependency: dependency.event,
-          error: dependency.error,
-        );
-        failures[event.id] = (event: event, error: exception);
-        _remove(event);
-        dependencies.remove(event.id);
-        _controller.addError(
-          EventFailedException(event: event, error: exception, stackTrace: stackTrace),
-        );
+      for (final event in events) {
+        if (dependentIds.contains(event.id)) continue;
+        final eventDependencies = dependencies[event.id];
+        if (eventDependencies == null || !dependentIds.any(eventDependencies.contains)) continue;
+        dependentIds.add(event.id);
+        dependents.add(event);
         changed = true;
       }
     } while (changed);
+    return dependents;
   }
 
-  bool _dependsOnAny(Event event, Iterable<String> ids) {
-    final eventDependencies = dependencies[event.id];
-    return eventDependencies != null && ids.any(eventDependencies.contains);
+  /// Forgets the dependencies of [event] and the dependencies on it, once it is no longer pending.
+  void _forget(Event event) {
+    dependencies.remove(event.id);
+    dependencies.updateAll((_, ids) => ids..remove(event.id));
+    dependencies.removeWhere((_, ids) => ids.isEmpty);
   }
 
   void _remove(Event event) {
-    final index = _currentQueue.indexOf(event);
-    if (index != -1) removeIndexFromCurrentQueue(index);
+    if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
     if (_retryQueue.containsKey(event.id)) {
       timers.remove(event.id)?.cancel();
       removeFromRetryQueue(event.id);

@@ -2,6 +2,8 @@ import 'dart:math';
 
 import 'package:queuekit/queuekit.dart';
 
+/// The [JsonSerializer] of [ExponentialBackoffRetryConfig]. Persists `maxRetries`, `delay` in
+/// milliseconds, `multiplier` and `retryCount`.
 final exponentialBackoffRetryConfigSerializer = JsonSerializer(
   fromJson: (json) {
     return ExponentialBackoffRetryConfig(
