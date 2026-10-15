@@ -251,8 +251,9 @@ queue.add(SharePhoto(photoId), dependsOn: [upload]);
 
 The rules:
 
-- A dependent event runs after its dependencies. Since they are pending when the dependent is
-  added, this is the natural order; dependencies only matter once something goes wrong.
+- A dependent event runs after its dependencies, though not necessarily right after them:
+  independent events may run in between. Since the dependencies are pending when the dependent
+  is added, this is the natural order; dependencies only matter once something goes wrong.
 - **If a dependency fails and is going to be retried, every event that depends on it, directly or
   through other dependents, moves to the retry queue with it.** When the dependency is retried they
   are all re-queued in their original order, right behind it. Events that do not depend on it keep

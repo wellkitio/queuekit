@@ -116,6 +116,12 @@ base class HydratedQueue extends Queue {
       }
     }
 
+    // Drop dependencies on events that were not restored, for example because their type has no
+    // serializer any more, so they are not persisted again.
+    final pendingIds = pendingEvents.map((event) => event.id).toSet();
+    dependencies.updateAll((_, ids) => ids..retainWhere(pendingIds.contains));
+    dependencies.removeWhere((_, ids) => ids.isEmpty);
+
     releaseUnblockedEvents();
   }
 
@@ -130,7 +136,8 @@ base class HydratedQueue extends Queue {
   }
 
   /// Serializes both queues now and writes them after the saves that are already in flight, so
-  /// that slow storage never persists an older state over a newer one.
+  /// that slow storage never persists an older state over a newer one. Returns the write, which
+  /// fails if a save callback throws.
   Future<void> _save() {
     final currentQueueJson = jsonEncode([
       for (final event in currentQueue)
@@ -152,10 +159,13 @@ base class HydratedQueue extends Queue {
             ..._dependsOnJson(event),
           },
     });
-    return _pendingSaves = _pendingSaves.then((_) async {
+    final save = _pendingSaves.then((_) async {
       await saveCurrentQueue(currentQueueJson);
       await saveRetryQueue(retryQueueJson);
     });
+    // A failed save surfaces to the caller but must not block the saves after it.
+    _pendingSaves = save.catchError((Object _) {});
+    return save;
   }
 
   Map<String, dynamic> _dependsOnJson(Event event) {

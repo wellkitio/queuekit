@@ -142,6 +142,85 @@ void main() {
     });
   });
 
+  group('Given a started HydratedQueue whose storage fails for the first save', () {
+    late HydratedQueue queue;
+    late List<String> savedCurrentQueues;
+    late int saves;
+
+    setUp(() {
+      savedCurrentQueues = [];
+      saves = 0;
+      queue = HydratedQueue(
+        QueueStartListenable(),
+        eventSerializers: countingSerializers,
+        hydrateCurrentQueue: () => null,
+        hydrateRetryQueue: () => null,
+        saveCurrentQueue: (data) {
+          if (saves++ == 0) throw StateError('storage unavailable');
+          savedCurrentQueues.add(data);
+        },
+        saveRetryQueue: (data) {},
+      );
+    });
+
+    tearDown(() => queue.dispose());
+
+    group('When two events are added', () {
+      Object? firstAddError;
+
+      setUp(() async {
+        firstAddError = null;
+        await queue.add(CountingEvent('a')).catchError((Object error) {
+          firstAddError = error;
+        });
+        await queue.add(CountingEvent('b'));
+      });
+
+      test('Then the first add reports the failure', () {
+        expect(firstAddError, isStateError);
+      });
+
+      test('Then later saves still go through', () {
+        expect(savedCurrentQueues.map((data) => (jsonDecode(data) as List).length), [2]);
+      });
+    });
+  });
+
+  group('Given a HydratedQueue with a persisted dependency on an event that is not restored', () {
+    late HydratedQueue queue;
+    late List<String> savedCurrentQueues;
+
+    setUp(() {
+      savedCurrentQueues = [];
+      queue = HydratedQueue(
+        QueueStartListenable(),
+        eventSerializers: countingSerializers,
+        hydrateCurrentQueue: () {
+          return jsonEncode([
+            {'type': 'Unknown', 'id': 'b'},
+            {
+              'type': 'CountingEvent',
+              'id': 'c',
+              'dependsOn': ['b'],
+            },
+          ]);
+        },
+        hydrateRetryQueue: () => null,
+        saveCurrentQueue: savedCurrentQueues.add,
+        saveRetryQueue: (data) {},
+      );
+    });
+
+    tearDown(() => queue.dispose());
+
+    test('When hydrated then the dangling dependency is dropped', () async {
+      await queue.hydrate();
+      await queue.add(CountingEvent('d'));
+
+      expect(savedCurrentQueues.last, isNot(contains('dependsOn')));
+    });
+  });
+
   group('Given a started HydratedQueue whose storage is slow for the first save', () {
     late HydratedQueue queue;
     late List<String> savedCurrentQueues;
