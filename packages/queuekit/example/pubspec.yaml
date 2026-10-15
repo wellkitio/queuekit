@@ -1,7 +1,6 @@
 name: queuekit_example
 description: "Example application to demonstrate QueueKit"
 publish_to: 'none'
-version: 0.1.0
 
 resolution: workspace
 

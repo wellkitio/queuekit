@@ -62,10 +62,21 @@ packages/queuekit/test/      Tests, written in Given/When/Then style
 ### Conventions
 
 - Commits follow [Conventional Commits](https://www.conventionalcommits.org); `!` marks a breaking
-  change.
+  change. Commit subjects become changelog lines, so write them for the changelog's readers.
 - Tests are structured as `Given … / When … / Then …` groups with assertion-only cases.
-- Every user-facing change gets an entry in [`CHANGELOG.md`](CHANGELOG.md) and in the package's
-  [`CHANGELOG.md`](packages/queuekit/CHANGELOG.md).
+
+### Releasing
+
+Versions and changelogs are generated from the commits since the package's last release tag
+(`queuekit-v<version>`):
+
+```sh
+dpk release version --dry-run   # Show the next version and changelog entries
+dpk release version             # Bump pubspec.yaml, write CHANGELOG.md, commit and tag
+git push --follow-tags
+dpk release publish --dry-run
+dpk release publish             # Publish to pub.dev
+```
 
 ## License
 
