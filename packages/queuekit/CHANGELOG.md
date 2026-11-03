@@ -1,3 +1,14 @@
+## 1.2.0
+
+- Feat: Add transactional per-event QueueStore persistence for HydratedQueue (#8)
+  - `HydratedQueue.store`: Per-event persistence using a database-backed or custom `QueueStore` rather than rewriting whole-queue snapshots.
+  - `QueueStore` and `InMemoryQueueStore`: Interface for per-event CRUD (`load`, `insert`, `update`, `remove`, `maxSequence`) and atomic batch `apply` (`QueueRecordInsert`, `QueueRecordUpdate`, `QueueRecordRemove`).
+  - Transactional Outbox: Prepare records with `queue.recordFor(event)`, write local entities and the `QueueRecord` in a single database transaction, add via `await queue.add(event, persisted: true)`, or roll back with `queue.discardRecord(event.id)`.
+  - `RetryPolicy` and `RetryDecision`: Per-failure retry policies (`RetryDecision.retryAt`, `RetryDecision.fail`, `RetryDecision.pause`) for handling HTTP 429 `Retry-After`, custom rate limits, or pausing on 401 token expiry.
+  - `QueueClock` and `FakeQueueClock`: Injectable clock interface for deterministic time and timer control in tests.
+  - Filtered hydration: Pass a `filter` predicate to `HydratedQueue.hydrate` to restore specific partitions (e.g. account-scoped events) in sequence order.
+  - Terminal failure retention: Store-backed queues retain permanently failed records with `QueueRecordState.failed` for dead-letter inspection instead of deleting them.
+
 ## 1.1.0
 
 - Feat: Dependent events, pending event queries and documentation (#6)
