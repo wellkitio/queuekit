@@ -1,3 +1,10 @@
+## 1.3.0
+
+- Feat: Overridable failure handling on `Queue` (#11)
+  - `Queue.handleEventError`: Protected, synchronous hook called whenever an event's `run` throws. Override it in a `Queue` or `HydratedQueue` subclass to replace or wrap the whole failure path: attempt counting, decision and retry, pause or fail. The default behaves exactly as in 1.2.0, so every failure, a pause included, still counts as an attempt.
+  - `Queue.resolveRetryDecision` and `Queue.applyRetryDecision`: The two steps of the default handler, exposed so that overrides can reuse them. `applyRetryDecision` still calls `onEventPaused` and `onEventFailedPermanently`, so `HydratedQueue` persistence keeps working.
+  - Documented a 401 handler that pauses the queue without using up the retry budget, so the persisted `QueueRecord.attemptCount` keeps its previous value.
+
 ## 1.2.0
 
 - Feat: Add transactional per-event QueueStore persistence for HydratedQueue (#8)
