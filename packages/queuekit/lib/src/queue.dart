@@ -390,36 +390,7 @@ base class Queue {
         } catch (e, s) {
           _runningEvent = null;
           if (_disposed) return;
-          final attemptCount = (attemptCounts[event.id] ?? event.retryConfig?.retryCount ?? 0) + 1;
-          attemptCounts[event.id] = attemptCount;
-          final decision = _resolveRetryDecision(event, e, attemptCount);
-          switch (decision) {
-            case RetryAtDecision(:final nextAttemptAt):
-              final now = clock.now();
-              final duration = nextAttemptAt.isAfter(now)
-                  ? nextAttemptAt.difference(now)
-                  : Duration.zero;
-              addToRetryQueue(event.id, event, nextAttemptAt);
-              addTimerForRetry(event.id, event, duration);
-              _controller.addError(
-                EventFailedException(event: event, error: e, stackTrace: s, willRetry: true),
-              );
-              _parkDependents(event);
-              if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
-            case PauseDecision():
-              startListenable.pause();
-              onEventPaused(event);
-              _controller.addError(
-                EventFailedException(event: event, error: e, stackTrace: s, willRetry: true),
-              );
-            case FailDecision(:final retainRecord):
-              onEventFailedPermanently(event, e, retainRecord: retainRecord);
-              _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
-              _failDependents(event, e, s, retainRecord: retainRecord);
-              if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
-              attemptCounts.remove(event.id);
-              _forget(event);
-          }
+          handleEventError(event, e, s);
         }
       }
     } finally {
@@ -428,8 +399,89 @@ base class Queue {
     }
   }
 
-  /// Resolves the [RetryDecision] for [event] after [error] on attempt [attemptCount].
-  RetryDecision _resolveRetryDecision(Event event, Object error, int attemptCount) {
+  /// Handles [event] after its [Event.run] threw [error] with [stackTrace].
+  ///
+  /// The default records the attempt in [attemptCounts], asks [resolveRetryDecision] for a
+  /// decision and carries it out with [applyRetryDecision]. Every failure counts as an attempt,
+  /// including one that pauses the queue.
+  ///
+  /// Override it to replace or wrap the whole failure path. It runs synchronously inside the
+  /// processing loop, so a [PauseDecision] applied here stops the queue before the next event
+  /// runs. For example, a queue whose 401 pause must not use up the retry budget can apply a
+  /// pause without storing the new count:
+  ///
+  /// ```dart
+  /// @override
+  /// void handleEventError(Event event, Object error, StackTrace stackTrace) {
+  ///   final attemptCount = (attemptCounts[event.id] ?? event.retryConfig?.retryCount ?? 0) + 1;
+  ///   final decision = resolveRetryDecision(event, error, attemptCount);
+  ///   if (decision is! PauseDecision) attemptCounts[event.id] = attemptCount;
+  ///   applyRetryDecision(event, decision, error, stackTrace);
+  /// }
+  /// ```
+  ///
+  /// Resolve the decision once per failure: [resolveRetryDecision] calls [retryPolicy] and can
+  /// advance [RetryConfig.retryCount], so an override that resolves a decision should apply it
+  /// itself rather than also calling `super`.
+  @protected
+  void handleEventError(Event event, Object error, StackTrace stackTrace) {
+    final attemptCount = (attemptCounts[event.id] ?? event.retryConfig?.retryCount ?? 0) + 1;
+    attemptCounts[event.id] = attemptCount;
+    final decision = resolveRetryDecision(event, error, attemptCount);
+    applyRetryDecision(event, decision, error, stackTrace);
+  }
+
+  /// Carries out [decision] for [event], which failed with [error] and [stackTrace].
+  ///
+  /// A [RetryAtDecision] schedules the event in the [retryQueue] and parks its dependents, a
+  /// [PauseDecision] pauses [startListenable] and calls [onEventPaused], and a [FailDecision]
+  /// calls [onEventFailedPermanently] and fails the event's dependents. Each emits an
+  /// [EventFailedException] on [results]. It does not change [attemptCounts], except that a
+  /// [FailDecision] removes the event's entry.
+  @protected
+  void applyRetryDecision(
+    Event event,
+    RetryDecision decision,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    switch (decision) {
+      case RetryAtDecision(:final nextAttemptAt):
+        final now = clock.now();
+        final duration = nextAttemptAt.isAfter(now) ? nextAttemptAt.difference(now) : Duration.zero;
+        addToRetryQueue(event.id, event, nextAttemptAt);
+        addTimerForRetry(event.id, event, duration);
+        _controller.addError(
+          EventFailedException(event: event, error: error, stackTrace: stackTrace, willRetry: true),
+        );
+        _parkDependents(event);
+        if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
+      case PauseDecision():
+        startListenable.pause();
+        onEventPaused(event);
+        _controller.addError(
+          EventFailedException(event: event, error: error, stackTrace: stackTrace, willRetry: true),
+        );
+      case FailDecision(:final retainRecord):
+        onEventFailedPermanently(event, error, retainRecord: retainRecord);
+        _controller.addError(
+          EventFailedException(event: event, error: error, stackTrace: stackTrace),
+        );
+        _failDependents(event, error, stackTrace, retainRecord: retainRecord);
+        if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
+        attemptCounts.remove(event.id);
+        _forget(event);
+    }
+  }
+
+  /// The [RetryDecision] for [event] after it failed with [error] on attempt [attemptCount]:
+  /// the decision of [retryPolicy] when it returns one, otherwise one based on the event's
+  /// [Event.retryConfig].
+  ///
+  /// When the decision is a [RetryAtDecision], it also advances [RetryConfig.retryCount] if a
+  /// retry is left.
+  @protected
+  RetryDecision resolveRetryDecision(Event event, Object error, int attemptCount) {
     final customDecision = retryPolicy?.call(event, error, attemptCount);
     if (customDecision != null) {
       if (customDecision is RetryAtDecision) {
