@@ -228,6 +228,46 @@ final class JitteredRetryConfig extends RetryConfig {
 }
 ```
 
+### Per-failure retry policy and injectable clock
+
+Pass a `retryPolicy` to `Queue` or `HydratedQueue` to decide per failure whether to retry at a
+given timestamp (for example, honouring an HTTP `Retry-After` header), fail permanently, or pause
+the queue (for example, on `401 Unauthorized` while refreshing credentials):
+
+```dart
+final queue = HydratedQueue.store(
+  startListenable,
+  eventSerializers: [UploadPhoto.serializer],
+  store: store,
+  retryPolicy: (event, error, attemptCount) {
+    if (error is UnauthorizedException) return const RetryDecision.pause();
+    if (error is RateLimitException) return RetryDecision.retryAt(error.retryAfter);
+    if (error is BadRequestException) return const RetryDecision.fail();
+    return null; // Fall back to event.retryConfig.
+  },
+);
+```
+
+- `RetryDecision.retryAt(nextAttemptAt)` places the event in the `retryQueue` until `nextAttemptAt`.
+- `RetryDecision.fail({bool? retainRecord})` fails the event permanently without further retries.
+  In a store-backed `HydratedQueue`, omitting `retainRecord` (`null`) falls back to
+  `HydratedQueue.retainFailedEvents` (which defaults to `true`), while passing `true` or `false`
+  explicitly overrides it for that failure. When retained, the `QueueRecord` is kept in the
+  `QueueStore` with `QueueRecordState.failed` instead of being deleted.
+- `RetryDecision.pause()` calls `startListenable.pause()` and leaves the event at the front of the
+  `currentQueue` so it runs again once `startListenable.start()` is called.
+- Returning `null` falls back to `event.retryConfig`.
+
+Pass a `QueueClock` (such as `FakeQueueClock` in tests) to drive every retry timer and "is it due?"
+check deterministically:
+
+```dart
+final clock = FakeQueueClock(DateTime.utc(2026));
+final queue = Queue(startListenable, clock: clock);
+
+clock.advance(const Duration(seconds: 10)); // Fires due retry timers in order.
+```
+
 ## Querying pending events
 
 Sometimes you need to know what is already queued, for example to avoid queueing the same work
@@ -420,6 +460,61 @@ Here only the `event` object is passed back to `fromJson`, which is why `toJson`
 the id itself. `awaitingRetry` distinguishes an event waiting for its own retry from one that is
 only waiting for a dependency.
 
+### Per-event persistence and transactional outbox (`QueueStore`)
+
+For database-backed queues (such as SQLite through drift), use `HydratedQueue.store` with a
+`QueueStore` so each event is persisted as an individual `QueueRecord` rather than rewriting whole-
+queue snapshots:
+
+```dart
+final queue = HydratedQueue.store(
+  startListenable,
+  eventSerializers: [UploadPhoto.serializer, SharePhoto.serializer],
+  store: store,
+);
+```
+
+- Each `QueueRecord` holds `id`, `type`, `eventJson`, `state` (`pending`, `scheduled`, or
+  `failed`), `dependsOn`, `attemptCount`, `nextAttemptAt`, `awaitingRetry`, `sequence` and `error`.
+- Changes in the same synchronous run are applied in one `store.apply(changes)` call (`QueueRecordInsert`,
+  `QueueRecordUpdate`, `QueueRecordRemove`). Override `apply` in a database store to run the batch
+  inside a transaction so an event never transiently disappears between states.
+- **Transactional outbox**: build the record with `queue.recordFor(event)`, write your local entity
+  and the `QueueRecord` inside **one** database transaction, and call
+  `await queue.add(event, persisted: true)` after the transaction commits. The event never becomes
+  runnable before the commit, and `add` does not insert the record a second time. If the transaction
+  rolls back, call `queue.discardRecord(event.id)`:
+
+```dart
+final event = UploadPhoto(photoId);
+final record = queue.recordFor(event);
+
+try {
+  await db.transaction(() async {
+    await db.photos.insert(photo);
+    await db.queueRecords.insert(record.toJson()); // Write the record in the same DB transaction.
+  });
+} catch (_) {
+  queue.discardRecord(event.id);
+  rethrow;
+}
+
+await queue.add(event, persisted: true);
+```
+
+- **Filtered restore**: pass `filter` to `hydrate` to restore only one partition (for example, the
+  signed-in account's mutations) in ascending `sequence` order while leaving other partitions'
+  records untouched in the store:
+
+```dart
+await queue.hydrate(filter: (record) => record.eventJson['accountId'] == currentAccountId);
+```
+
+- **Terminal failures**: when an event exhausts its `RetryConfig` or `retryPolicy` returns
+  `RetryDecision.fail()`, its record is updated to `QueueRecordState.failed` in the store instead
+  of being deleted (configurable via `retainFailedEvents` or `RetryDecision.fail(retainRecord: false)`).
+  `hydrate` skips `failed` records on future launches.
+
 ## Disposing
 
 ```dart
@@ -435,8 +530,14 @@ and clears the queue. Adding to or listening to the queue afterwards throws a `S
 | Type | Purpose |
 | --- | --- |
 | `Event<T>` | A unit of work with an `id`, a `type`, an optional `retryConfig` and a `run` method. |
-| `Queue` | Runs events in order. `add`, `pendingEvents`, `findEvent`, `findEvents`, `currentQueue`, `retryQueue`, `startListenable`, `results`, `listenAll`, `listenWhere`, `waitFor`, `dispose`. |
-| `HydratedQueue` | A `Queue` that persists itself through callbacks and restores with `hydrate`. |
+| `Queue` | Runs events in order. `add`, `pendingEvents`, `findEvent`, `findEvents`, `currentQueue`, `retryQueue`, `startListenable`, `clock`, `retryPolicy`, `results`, `listenAll`, `listenWhere`, `waitFor`, `dispose`. |
+| `HydratedQueue` | A `Queue` that persists itself through a `QueueStore` or snapshot callbacks, prepares transactional records with `recordFor` / `discardRecord`, and restores with `hydrate`. |
+| `QueueStore` | Per-event persistence interface: `load`, `insert`, `update`, `remove`, `maxSequence`, `apply`. |
+| `InMemoryQueueStore` | An in-memory `QueueStore` with atomic `apply` batches. |
+| `QueueRecord` | A single persisted event record with `state` (`QueueRecordState`), `dependsOn`, `attemptCount`, `nextAttemptAt` and `sequence`. |
+| `QueueChange` | Sealed change set item (`QueueRecordInsert`, `QueueRecordUpdate`, `QueueRecordRemove`) passed to `QueueStore.apply`. |
+| `RetryPolicy` / `RetryDecision` | Per-failure hook returning `RetryDecision.retryAt`, `RetryDecision.fail` or `RetryDecision.pause`. |
+| `QueueClock` / `FakeQueueClock` | Injectable clock for retry timers and due-time checks. |
 | `QueueStartListenable` | Starts and pauses a queue: `start`, `pause`, `isStarted`. |
 | `RetryConfig` | Base class for retry strategies: `maxRetries`, `retryCount`, `canRetry`, `retry`, `minimumDurationForRetry`, `minimumDurationForCurrentRetry`, `serializer`. |
 | `LinearRetryConfig` | Retries after `delay × retryCount`. |

@@ -13,15 +13,26 @@ typedef OnError<T extends Event<U>, U extends Object?> =
 
 /// Runs events one at a time, in the order they were added, while [startListenable] is started.
 ///
-/// Failed events are retried according to their [Event.retryConfig], and events added with
-/// `dependsOn` wait for their dependencies. Results and failures are published on [results].
+/// Failed events are retried according to [retryPolicy] or their [Event.retryConfig], and events
+/// added with `dependsOn` wait for their dependencies. Results and failures are published on
+/// [results].
 base class Queue {
-  Queue(this.startListenable) {
-    startListenable.addListener(_updateRunning);
+  Queue(this.startListenable, {this.clock = QueueClock.system, this.retryPolicy}) {
+    startListenable
+      ..addListener(_updateRunning)
+      ..addOnStartListener(resumeProcessing);
   }
 
   /// Starts and pauses this queue. Disposed together with the queue.
   final QueueStartListenable startListenable;
+
+  /// Supplies the current time and creates retry timers.
+  final QueueClock clock;
+
+  /// Optional per-failure hook that decides whether to retry at a given time, fail permanently or
+  /// pause the queue. When `null`, or when it returns `null`, the queue falls back to the failed
+  /// event's [Event.retryConfig].
+  final RetryPolicy? retryPolicy;
 
   final _currentQueue = <Event>[];
   final _retryQueue = <String, ({Event event, DateTime nextExecutionTime})>{};
@@ -35,9 +46,18 @@ base class Queue {
   @protected
   final timers = <String, Timer>{};
 
+  /// The number of failed attempts recorded for each pending event, keyed by event id.
+  @protected
+  final attemptCounts = <String, int>{};
+
   late bool _running = startListenable.isStarted;
   bool _processing = false;
   bool _disposed = false;
+  Event? _runningEvent;
+
+  /// Whether [dispose] has been called on this queue.
+  @protected
+  bool get isDisposed => _disposed;
 
   /// The events waiting to run, in order. While the queue is processing, the first one is the
   /// event currently running.
@@ -99,13 +119,14 @@ base class Queue {
         ifAbsent: () => dependencyIds,
       );
     }
+    attemptCounts.putIfAbsent(event.id, () => event.retryConfig?.retryCount ?? 0);
     final blockedUntil = _blockedUntil(event);
     if (blockedUntil != null) {
       addToRetryQueue(event.id, event, blockedUntil);
       return;
     }
     addToCurrentQueue(event);
-    if (_running && _currentQueue.length == 1) {
+    if (_running && !_processing) {
       _start();
     }
   }
@@ -189,6 +210,8 @@ base class Queue {
     _retryQueue.clear();
     dependencies.clear();
     timers.clear();
+    attemptCounts.clear();
+    _runningEvent = null;
     _running = false;
     _disposed = true;
   }
@@ -197,7 +220,26 @@ base class Queue {
   @protected
   void addToCurrentQueue(Event event) {
     _checkDisposed();
-    _currentQueue.add(event);
+    final eventDeps = dependencies[event.id];
+    var minIndex = 0;
+    if (eventDeps != null && eventDeps.isNotEmpty) {
+      for (var i = 0; i < _currentQueue.length; i++) {
+        if (eventDeps.contains(_currentQueue[i].id)) {
+          minIndex = i + 1;
+        }
+      }
+    }
+    var insertIndex = _currentQueue.length;
+    for (var i = minIndex; i < _currentQueue.length; i++) {
+      final existing = _currentQueue[i];
+      if (identical(existing, _runningEvent)) continue;
+      if (dependencies[existing.id]?.contains(event.id) ?? false) {
+        insertIndex = i;
+        break;
+      }
+    }
+    _currentQueue.insert(insertIndex, event);
+    _reorderCurrentQueue();
   }
 
   /// Removes [event] from the [currentQueue].
@@ -225,7 +267,7 @@ base class Queue {
   @protected
   void addTimerForRetry(String id, Event event, Duration duration) {
     _checkDisposed();
-    timers[id] = Timer(duration, () {
+    timers[id] = clock.createTimer(duration, () {
       removeFromRetryQueue(id);
       timers.remove(id);
       add(event);
@@ -258,6 +300,37 @@ base class Queue {
         released = true;
       }
     } while (released);
+  }
+
+  /// Awaited right before [event] runs. Subclasses can use this to flush persistence before
+  /// [Event.run] starts.
+  @protected
+  Future<void> beforeRun(Event event) async {}
+
+  /// Whether [event] is ready to run after [beforeRun] completes.
+  @protected
+  bool canRun(Event event) => true;
+
+  /// Whether [event] (or one of its dependencies) is waiting for a dependency that has been
+  /// prepared but not yet added to the queue.
+  @protected
+  bool hasUnaddedDependency(Event event) => false;
+
+  /// Called when [retryPolicy] pauses the queue after [event] fails.
+  @protected
+  void onEventPaused(Event event) {}
+
+  /// Called when [event] fails permanently, either from [Event.run] or because a dependency
+  /// failed.
+  @protected
+  void onEventFailedPermanently(Event event, Object error, {required bool? retainRecord}) {}
+
+  /// Starts processing the [currentQueue] if the queue is started and not already processing.
+  @protected
+  void resumeProcessing() {
+    if (!_disposed && _running && !_processing && _currentQueue.isNotEmpty) {
+      _start();
+    }
   }
 
   void _checkDisposed() {
@@ -295,39 +368,85 @@ base class Queue {
           addToRetryQueue(event.id, event, blockedUntil);
           continue;
         }
+        if (_deferAfterPendingDependencies(event)) {
+          continue;
+        }
+        await beforeRun(event);
+        if (_disposed || !_running) break;
+        if (_currentQueue.isEmpty || !identical(_currentQueue.first, event)) continue;
+        if (_deferAfterPendingDependencies(event)) {
+          continue;
+        }
+        if (!canRun(event)) break;
         try {
+          _runningEvent = event;
           final result = await event.run();
+          _runningEvent = null;
           if (_disposed) return;
+          attemptCounts.remove(event.id);
           _forget(event);
           _controller.add((event: event, result: result));
+          if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
         } catch (e, s) {
+          _runningEvent = null;
           if (_disposed) return;
-          final willRetry = _scheduleRetry(event);
-          _controller.addError(
-            EventFailedException(event: event, error: e, stackTrace: s, willRetry: willRetry),
-          );
-          if (willRetry) {
-            _parkDependents(event);
-          } else {
-            _failDependents(event, e, s);
+          final attemptCount = (attemptCounts[event.id] ?? event.retryConfig?.retryCount ?? 0) + 1;
+          attemptCounts[event.id] = attemptCount;
+          final decision = _resolveRetryDecision(event, e, attemptCount);
+          switch (decision) {
+            case RetryAtDecision(:final nextAttemptAt):
+              final now = clock.now();
+              final duration = nextAttemptAt.isAfter(now)
+                  ? nextAttemptAt.difference(now)
+                  : Duration.zero;
+              addToRetryQueue(event.id, event, nextAttemptAt);
+              addTimerForRetry(event.id, event, duration);
+              _controller.addError(
+                EventFailedException(event: event, error: e, stackTrace: s, willRetry: true),
+              );
+              _parkDependents(event);
+              if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
+            case PauseDecision():
+              startListenable.pause();
+              onEventPaused(event);
+              _controller.addError(
+                EventFailedException(event: event, error: e, stackTrace: s, willRetry: true),
+              );
+            case FailDecision(:final retainRecord):
+              onEventFailedPermanently(event, e, retainRecord: retainRecord);
+              _controller.addError(EventFailedException(event: event, error: e, stackTrace: s));
+              _failDependents(event, e, s, retainRecord: retainRecord);
+              if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
+              attemptCounts.remove(event.id);
+              _forget(event);
           }
         }
-        if (_currentQueue.contains(event)) removeFromCurrentQueue(event);
       }
     } finally {
+      _runningEvent = null;
       _processing = false;
     }
   }
 
-  /// Schedules a retry for [event] and returns whether one was scheduled.
-  bool _scheduleRetry(Event event) {
+  /// Resolves the [RetryDecision] for [event] after [error] on attempt [attemptCount].
+  RetryDecision _resolveRetryDecision(Event event, Object error, int attemptCount) {
+    final customDecision = retryPolicy?.call(event, error, attemptCount);
+    if (customDecision != null) {
+      if (customDecision is RetryAtDecision) {
+        final retryConfig = event.retryConfig;
+        if (retryConfig != null && retryConfig.canRetry) {
+          retryConfig.retry();
+        }
+      }
+      return customDecision;
+    }
     final retryConfig = event.retryConfig;
-    if (retryConfig == null || !retryConfig.canRetry) return false;
+    if (retryConfig == null || !retryConfig.canRetry) {
+      return const RetryDecision.fail();
+    }
     retryConfig.retry();
     final duration = retryConfig.minimumDurationForCurrentRetry();
-    addToRetryQueue(event.id, event, DateTime.now().toUtc().add(duration));
-    addTimerForRetry(event.id, event, duration);
-    return true;
+    return RetryDecision.retryAt(clock.now().toUtc().add(duration));
   }
 
   /// The time until which [event] has to wait for a dependency in the [retryQueue], or `null`
@@ -356,7 +475,12 @@ base class Queue {
 
   /// Fails every pending event that depends on [failed], directly or indirectly, with a
   /// [DependencyFailedException] naming its direct dependency.
-  void _failDependents(Event failed, Object error, StackTrace stackTrace) {
+  void _failDependents(
+    Event failed,
+    Object error,
+    StackTrace stackTrace, {
+    required bool? retainRecord,
+  }) {
     final errors = <String, Object>{failed.id: error};
     final failedEvents = <String, Event>{failed.id: failed};
     for (final event in _dependentsOf(failed, pendingEvents)) {
@@ -367,7 +491,9 @@ base class Queue {
       );
       errors[event.id] = exception;
       failedEvents[event.id] = event;
+      onEventFailedPermanently(event, exception, retainRecord: retainRecord);
       _remove(event);
+      attemptCounts.remove(event.id);
       _controller.addError(
         EventFailedException(event: event, error: exception, stackTrace: stackTrace),
       );
@@ -408,6 +534,62 @@ base class Queue {
     if (_retryQueue.containsKey(event.id)) {
       timers.remove(event.id)?.cancel();
       removeFromRetryQueue(event.id);
+    }
+  }
+
+  /// If [event] depends on any event that appears later in [_currentQueue], or is waiting for an
+  /// unadded dependency while a later event in [_currentQueue] is not, moves [event] and its
+  /// dependents in [_currentQueue] after that event and returns `true`.
+  bool _deferAfterPendingDependencies(Event event) {
+    if (identical(event, _runningEvent)) return false;
+    final eventIndex = _currentQueue.indexOf(event);
+    if (eventIndex < 0) return false;
+    final deps = dependencies[event.id];
+    final waitingOnUnadded = hasUnaddedDependency(event);
+    var shouldMove = false;
+    for (var i = eventIndex + 1; i < _currentQueue.length; i++) {
+      final candidate = _currentQueue[i];
+      if ((deps != null && deps.contains(candidate.id)) ||
+          (waitingOnUnadded && !hasUnaddedDependency(candidate))) {
+        shouldMove = true;
+        break;
+      }
+    }
+    if (!shouldMove) return false;
+
+    final dependents = _dependentsOf(event, _currentQueue);
+    final toMove = <Event>[
+      event,
+      for (final dependent in dependents)
+        if (!identical(dependent, _runningEvent) && !(deps?.contains(dependent.id) ?? false))
+          dependent,
+    ];
+    final movingIds = {for (final e in toMove) e.id};
+    _currentQueue.removeWhere((e) => movingIds.contains(e.id));
+    var lastDepIndex = -1;
+    for (var i = 0; i < _currentQueue.length; i++) {
+      final candidate = _currentQueue[i];
+      if ((deps != null && deps.contains(candidate.id)) ||
+          (waitingOnUnadded && !hasUnaddedDependency(candidate))) {
+        lastDepIndex = i;
+      }
+    }
+    _currentQueue.insertAll(lastDepIndex + 1, toMove);
+    return true;
+  }
+
+  void _reorderCurrentQueue() {
+    var changed = true;
+    var guard = 0;
+    final maxIterations = _currentQueue.length * _currentQueue.length + 1;
+    while (changed && guard++ < maxIterations) {
+      changed = false;
+      for (final event in _currentQueue.toList()) {
+        if (_deferAfterPendingDependencies(event)) {
+          changed = true;
+          break;
+        }
+      }
     }
   }
 }
