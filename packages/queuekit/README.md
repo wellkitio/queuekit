@@ -258,6 +258,54 @@ final queue = HydratedQueue.store(
   `currentQueue` so it runs again once `startListenable.start()` is called.
 - Returning `null` falls back to `event.retryConfig`.
 
+`attemptCount` is `1` on the first failure and goes up by `1` on every failure, including one that
+pauses the queue. A store-backed `HydratedQueue` persists it as `QueueRecord.attemptCount`.
+
+### Custom failure handling
+
+To change how failures are handled, including how attempts are counted, subclass `Queue` or
+`HydratedQueue` and override `handleEventError`. It runs synchronously every time an event's `run`
+throws. The default implementation does three things:
+
+1. It adds `1` to the event's entry in the protected `attemptCounts` map.
+2. It calls `resolveRetryDecision`, which asks `retryPolicy` first and then `event.retryConfig`.
+3. It passes the decision to `applyRetryDecision`, which schedules the retry, pauses the queue, or
+   fails the event and its dependents, then emits the `EventFailedException`.
+
+`applyRetryDecision` also calls the persistence hooks, so a `HydratedQueue` subclass keeps saving
+whatever your override decides.
+
+For example, a 401 that pauses the queue while the app refreshes its credentials was rejected, not
+lost. To keep that pause from using up the retry budget, store the new count only when the decision
+is not a pause:
+
+```dart
+final class OutboxQueue extends HydratedQueue {
+  OutboxQueue.store(
+    super.startListenable, {
+    required super.eventSerializers,
+    required super.store,
+    super.retryPolicy,
+  }) : super.store();
+
+  @override
+  void handleEventError(Event event, Object error, StackTrace stackTrace) {
+    final attemptCount = (attemptCounts[event.id] ?? event.retryConfig?.retryCount ?? 0) + 1;
+    final decision = resolveRetryDecision(event, error, attemptCount);
+    if (decision is! PauseDecision) attemptCounts[event.id] = attemptCount;
+    applyRetryDecision(event, decision, error, stackTrace);
+  }
+}
+```
+
+After the pause, the `retryPolicy` was still called with the would-be `attemptCount`. The
+persisted `QueueRecord.attemptCount` keeps its previous value, and if the event fails again after
+`start()`, that failure gets the same count it would have had without the pause.
+
+Resolve the decision once per failure. `resolveRetryDecision` calls `retryPolicy` and can advance
+`RetryConfig.retryCount`, so an override that resolves a decision should apply it itself instead
+of also calling `super.handleEventError`.
+
 Pass a `QueueClock` (such as `FakeQueueClock` in tests) to drive every retry timer and "is it due?"
 check deterministically:
 
@@ -536,7 +584,7 @@ and clears the queue. Adding to or listening to the queue afterwards throws a `S
 | `InMemoryQueueStore` | An in-memory `QueueStore` with atomic `apply` batches. |
 | `QueueRecord` | A single persisted event record with `state` (`QueueRecordState`), `dependsOn`, `attemptCount`, `nextAttemptAt` and `sequence`. |
 | `QueueChange` | Sealed change set item (`QueueRecordInsert`, `QueueRecordUpdate`, `QueueRecordRemove`) passed to `QueueStore.apply`. |
-| `RetryPolicy` / `RetryDecision` | Per-failure hook returning `RetryDecision.retryAt`, `RetryDecision.fail` or `RetryDecision.pause`. |
+| `RetryPolicy` / `RetryDecision` | Per-failure hook returning `RetryDecision.retryAt`, `RetryDecision.fail` or `RetryDecision.pause`. Override `Queue.handleEventError`, `resolveRetryDecision` and `applyRetryDecision` to customize failure handling. |
 | `QueueClock` / `FakeQueueClock` | Injectable clock for retry timers and due-time checks. |
 | `QueueStartListenable` | Starts and pauses a queue: `start`, `pause`, `isStarted`. |
 | `RetryConfig` | Base class for retry strategies: `maxRetries`, `retryCount`, `canRetry`, `retry`, `minimumDurationForRetry`, `minimumDurationForCurrentRetry`, `serializer`. |

@@ -5,6 +5,7 @@ import 'package:queuekit/queuekit.dart';
 import 'package:test/test.dart';
 
 import 'utils/events.dart';
+import 'utils/queues.dart';
 
 void main() {
   group('Given a started store-backed HydratedQueue and a caller database transaction', () {
@@ -865,6 +866,92 @@ void main() {
     });
   });
 
+  group('Given a store-backed HydratedQueue that pauses on 401 without counting the attempt', () {
+    late InMemoryQueueStore store;
+    late FakeQueueClock clock;
+    late QueueStartListenable startListenable;
+    late HydratedQueue queue;
+    late List<int> policyAttemptCounts;
+    late DateTime serverRetryAfter;
+    late QueueRecord? recordBeforeFirstRun;
+
+    setUp(() async {
+      store = InMemoryQueueStore();
+      clock = FakeQueueClock(DateTime.utc(2026, 11, 3, 15));
+      startListenable = QueueStartListenable()..start();
+      policyAttemptCounts = [];
+      serverRetryAfter = DateTime.utc(2026, 11, 3, 15, 2);
+      queue = PauseWithoutCountingHydratedQueue.store(
+        startListenable,
+        eventSerializers: [OutboxMutationEvent.serializer],
+        store: store,
+        clock: clock,
+        retryPolicy: (event, error, attemptCount) {
+          policyAttemptCounts.add(attemptCount);
+          final message = error.toString();
+          if (message.contains('429')) return RetryDecision.retryAt(serverRetryAfter);
+          if (message.contains('401')) return const RetryDecision.pause();
+          return null;
+        },
+      );
+      queue.listenAll((_) {}, onError: (event, error, stackTrace) {});
+
+      var attempts = 0;
+      await queue.add(
+        OutboxMutationEvent(
+          id: 'auth-op',
+          entityId: 'e1',
+          accountId: 'acc-1',
+          onRun: () {
+            attempts++;
+            if (attempts == 1) {
+              recordBeforeFirstRun = store.records['auth-op'];
+              throw Exception('401 Unauthorized');
+            }
+            if (attempts == 2) throw Exception('429 Too Many Requests');
+          },
+        ),
+      );
+      await Future<void>.delayed(processingTime);
+    });
+
+    tearDown(() => queue.dispose());
+
+    group('When the event fails with 401 and retryPolicy returns pause', () {
+      test('Then the queue pauses and the record stays pending', () {
+        expect(startListenable.isStarted, isFalse);
+        expect(store.records['auth-op']?.state, equals(QueueRecordState.pending));
+      });
+
+      test('Then the retryPolicy receives attemptCount 1', () {
+        expect(policyAttemptCounts, [1]);
+      });
+
+      test('Then the persisted attemptCount stays at 0 and the record is not updated', () {
+        expect(store.records['auth-op']?.attemptCount, equals(0));
+        expect(store.records['auth-op'], same(recordBeforeFirstRun));
+      });
+    });
+
+    group('When the queue is resumed and the event then fails with 429', () {
+      setUp(() async {
+        startListenable.start();
+        await Future<void>.delayed(processingTime);
+      });
+
+      test('Then the retryPolicy receives attemptCount 1 again', () {
+        expect(policyAttemptCounts, [1, 1]);
+      });
+
+      test('Then the record is scheduled with attemptCount 1', () {
+        final record = store.records['auth-op'];
+        expect(record?.state, equals(QueueRecordState.scheduled));
+        expect(record?.nextAttemptAt, equals(serverRetryAfter));
+        expect(record?.attemptCount, equals(1));
+      });
+    });
+  });
+
   group('Given a QueueRecord with all fields populated', () {
     late QueueRecord original;
 
@@ -1094,4 +1181,15 @@ final class RecordingQueueStore extends QueueStore {
     await super.apply(changes);
     snapshotsAfterEachBatch.add(Map<String, QueueRecord>.unmodifiable(Map.of(_records)));
   }
+}
+
+/// A store-backed [HydratedQueue] whose paused attempts are not counted.
+final class PauseWithoutCountingHydratedQueue extends HydratedQueue with PauseWithoutCounting {
+  PauseWithoutCountingHydratedQueue.store(
+    super.startListenable, {
+    required super.eventSerializers,
+    required super.store,
+    super.clock,
+    super.retryPolicy,
+  }) : super.store();
 }

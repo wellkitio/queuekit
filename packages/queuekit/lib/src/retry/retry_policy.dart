@@ -4,7 +4,11 @@ import 'package:queuekit/queuekit.dart';
 /// Decides what a [Queue] should do when [event] fails with [error] on attempt [attemptCount].
 ///
 /// [attemptCount] starts at `1` for the first failed attempt and increases by `1` on each
-/// subsequent failure. Return `null` to fall back to the event's [Event.retryConfig].
+/// subsequent failure, including failures that return [RetryDecision.pause]. Return `null` to fall
+/// back to the event's [Event.retryConfig].
+///
+/// To count attempts differently, for example to not count a pause, override
+/// [Queue.handleEventError].
 typedef RetryPolicy = RetryDecision? Function(Event<Object?> event, Object error, int attemptCount);
 
 /// The action a [Queue] takes after an [Event.run] attempt throws.
@@ -25,6 +29,11 @@ sealed class RetryDecision {
 
   /// Pauses the queue ([QueueStartListenable.pause]) and leaves the event at the front of the
   /// [Queue.currentQueue] so it runs again once the queue is resumed.
+  ///
+  /// By default the paused attempt counts as an attempt, like any other failure, and a
+  /// [HydratedQueue] persists the new count. For a failure that was rejected rather than lost,
+  /// such as a 401 while credentials are refreshed, override [Queue.handleEventError] to apply the
+  /// pause without counting it.
   const factory RetryDecision.pause() = PauseDecision;
 }
 
