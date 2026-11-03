@@ -32,8 +32,9 @@
       "computedHash": "b3eb40152b81f0c98fd2095a023c019452dbdce56f7540cc67fece2972db8369"
     },
     "dpk": {
-      "source": "./skills/dpk",
-      "sourceType": "local",
+      "source": "exaby73/dpk",
+      "sourceType": "github",
+      "skillPath": "skills/dpk/SKILL.md",
       "computedHash": "ad514b028a3e1625bbce8863c23ab3bc91a8c45b0436cec62075b772241dd22d"
     },
     "grill-me": {
